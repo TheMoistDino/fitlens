@@ -36,7 +36,14 @@ export default function WorkoutPage() {
         </Badge>
       </header>
 
-      <CameraViewport videoRef={camera.videoRef} status={camera.status} error={camera.error} mirror={mirror} onRetry={() => void camera.start()}>
+      <CameraViewport
+        videoRef={camera.videoRef}
+        status={camera.status}
+        error={camera.error}
+        mirror={mirror}
+        onRetry={() => void camera.start()}
+        className="relative mx-auto w-full h-[65vh] md:h-[calc(100dvh-16rem)] min-h-[380px] overflow-hidden rounded-2xl md:rounded-3xl bg-black shadow-2xl"
+      >
         <ArCanvas>
           <SkeletonOverlay landmarksRef={session.landmarksRef} alertRef={session.alertRef} mirror={mirror} />
         </ArCanvas>

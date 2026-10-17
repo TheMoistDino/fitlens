@@ -87,7 +87,8 @@ const PoseNotes = z.object({ formNotes: z.string() });
 
 const PROMPTS = {
   food: `You are a nutrition vision model. Identify each distinct food item or beverage in the photo and estimate its portion.
-If a cup, mug, glass, or bottle contains a liquid (e.g. coffee, tea, cola, water), identify the specific drink. If visually ambiguous (e.g. coffee vs tea vs cola), note "Beverage (Coffee/Tea/Cola)" with confidenceScore 0.5 to allow user disambiguation.
+If a canned beverage, carton, or bottle is shown, read all brand names, product titles, flavors, and nutritional text printed on the label. Identify the exact canned or packaged drink.
+If a cup or glass contains a liquid, determine whether it is milk/dairy (white), juice (colorful), water (clear), or a dark beverage (coffee/tea/cola). If visually ambiguous, note "Beverage (Coffee/Tea/Cola)" or "Beverage (Milk/Latte)" with confidenceScore 0.5 to allow user disambiguation.
 Reply ONLY with JSON: {"items":[{"foodItem":string,"name":string,"estimatedWeightGrams":number,"calories":number,"kcal":number,"macros":{"protein":number,"carbs":number,"fat":number},"protein":number,"carbs":number,"fat":number,"confidenceScore":number 0-1}]}.
 Grams for macros. Return {"items":[]} if no food or beverage is visible.`,
   pose: `You are a strength coach looking at one frame of a user exercising.
@@ -97,7 +98,137 @@ Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cue
 function generateMockFoodResponse(context?: string) {
   const ctx = (context ?? '').toLowerCase();
 
-  // 1. Liquid containers / Beverages
+  // 1. Milk & Non-Dark Dairy Drinks
+  if (
+    ctx.includes('milk') ||
+    ctx.includes('dairy') ||
+    ctx.includes('white liquid') ||
+    ctx.includes('creamy liquid')
+  ) {
+    if (ctx.includes('oat')) {
+      return {
+        items: [
+          { foodItem: 'Oat Milk', name: 'Oat Milk', estimatedWeightGrams: 240, calories: 130, kcal: 130, protein: 3, carbs: 16, fat: 5, macros: { protein: 3, carbs: 16, fat: 5 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    if (ctx.includes('almond')) {
+      return {
+        items: [
+          { foodItem: 'Almond Milk (Unsweetened)', name: 'Almond Milk', estimatedWeightGrams: 240, calories: 35, kcal: 35, protein: 1, carbs: 1, fat: 2.5, macros: { protein: 1, carbs: 1, fat: 2.5 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    if (ctx.includes('skim') || ctx.includes('non-fat')) {
+      return {
+        items: [
+          { foodItem: 'Skim / Non-Fat Milk', name: 'Skim Milk', estimatedWeightGrams: 240, calories: 90, kcal: 90, protein: 9, carbs: 12, fat: 0, macros: { protein: 9, carbs: 12, fat: 0 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    return {
+      items: [
+        { foodItem: 'Whole Milk', name: 'Whole Milk', estimatedWeightGrams: 240, calories: 150, kcal: 150, protein: 8, carbs: 12, fat: 8, macros: { protein: 8, carbs: 12, fat: 8 }, confidenceScore: 0.9, confidence: 0.9 },
+      ],
+    };
+  }
+
+  // 2. Specific Canned Beverages & Energy Drinks
+  if (ctx.includes('celsius')) {
+    return {
+      items: [
+        { foodItem: 'Celsius Sparkling Energy (Can)', name: 'Celsius Sparkling Energy (Can)', estimatedWeightGrams: 355, calories: 10, kcal: 10, protein: 0, carbs: 0, fat: 0, macros: { protein: 0, carbs: 0, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('red bull')) {
+    const isZero = ctx.includes('zero') || ctx.includes('sugarfree');
+    return {
+      items: [
+        { foodItem: isZero ? 'Red Bull Sugarfree (Can)' : 'Red Bull Original (Can)', name: isZero ? 'Red Bull Sugarfree (Can)' : 'Red Bull Original (Can)', estimatedWeightGrams: 250, calories: isZero ? 5 : 110, kcal: isZero ? 5 : 110, protein: 1, carbs: isZero ? 0 : 28, fat: 0, macros: { protein: 1, carbs: isZero ? 0 : 28, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('monster')) {
+    const isUltra = ctx.includes('ultra') || ctx.includes('zero');
+    return {
+      items: [
+        { foodItem: isUltra ? 'Monster Energy Zero Ultra (Can)' : 'Monster Energy Original (Can)', name: isUltra ? 'Monster Energy Zero Ultra (Can)' : 'Monster Energy Original (Can)', estimatedWeightGrams: 473, calories: isUltra ? 10 : 210, kcal: isUltra ? 10 : 210, protein: 0, carbs: isUltra ? 4 : 54, fat: 0, macros: { protein: 0, carbs: isUltra ? 4 : 54, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('coke zero') || ctx.includes('zero sugar')) {
+    return {
+      items: [
+        { foodItem: 'Coca-Cola Zero Sugar (Can)', name: 'Coca-Cola Zero Sugar (Can)', estimatedWeightGrams: 355, calories: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, macros: { protein: 0, carbs: 0, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('diet coke')) {
+    return {
+      items: [
+        { foodItem: 'Diet Coke (Can)', name: 'Diet Coke (Can)', estimatedWeightGrams: 355, calories: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, macros: { protein: 0, carbs: 0, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('dr pepper')) {
+    return {
+      items: [
+        { foodItem: 'Dr Pepper (Can)', name: 'Dr Pepper (Can)', estimatedWeightGrams: 355, calories: 150, kcal: 150, protein: 0, carbs: 40, fat: 0, macros: { protein: 0, carbs: 40, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('poppi')) {
+    return {
+      items: [
+        { foodItem: 'Poppi Prebiotic Soda (Can)', name: 'Poppi Prebiotic Soda (Can)', estimatedWeightGrams: 355, calories: 25, kcal: 25, protein: 0, carbs: 5, fat: 0, macros: { protein: 0, carbs: 5, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('liquid death')) {
+    return {
+      items: [
+        { foodItem: 'Liquid Death Mountain Water (Can)', name: 'Liquid Death Mountain Water (Can)', estimatedWeightGrams: 500, calories: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, macros: { protein: 0, carbs: 0, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+      ],
+    };
+  }
+  if (ctx.includes('can') || ctx.includes('canned')) {
+    return {
+      items: [
+        {
+          foodItem: 'Canned Beverage (Soda / Seltzer / Energy)',
+          name: 'Canned Beverage (Soda / Seltzer / Energy)',
+          estimatedWeightGrams: 355,
+          calories: 10,
+          kcal: 10,
+          protein: 0,
+          carbs: 2,
+          fat: 0,
+          macros: { protein: 0, carbs: 2, fat: 0 },
+          confidenceScore: 0.5,
+          confidence: 0.5,
+        },
+      ],
+    };
+  }
+
+  // 3. Juices & Citrus Drinks
+  if (ctx.includes('orange juice') || ctx.includes('oj')) {
+    return {
+      items: [
+        { foodItem: 'Orange Juice', name: 'Orange Juice', estimatedWeightGrams: 240, calories: 110, kcal: 110, protein: 2, carbs: 26, fat: 0.5, macros: { protein: 2, carbs: 26, fat: 0.5 }, confidenceScore: 0.9, confidence: 0.9 },
+      ],
+    };
+  }
+  if (ctx.includes('apple juice')) {
+    return {
+      items: [
+        { foodItem: 'Apple Juice', name: 'Apple Juice', estimatedWeightGrams: 240, calories: 115, kcal: 115, protein: 0.2, carbs: 28, fat: 0.2, macros: { protein: 0.2, carbs: 28, fat: 0.2 }, confidenceScore: 0.9, confidence: 0.9 },
+      ],
+    };
+  }
+
+  // 4. Liquid containers / Generic Beverages
   if (
     ctx.includes('cup') ||
     ctx.includes('bottle') ||
@@ -133,12 +264,12 @@ function generateMockFoodResponse(context?: string) {
         ],
       };
     }
-    // Ambiguous dark liquid in cup/bottle: return low confidence to trigger liquid disambiguation flow
+    // Ambiguous liquid in cup/bottle: return low confidence to trigger disambiguation flow
     return {
       items: [
         {
-          foodItem: 'Beverage (Coffee / Tea / Cola)',
-          name: 'Beverage (Coffee / Tea / Cola)',
+          foodItem: 'Beverage (Milk / Coffee / Cola)',
+          name: 'Beverage (Milk / Coffee / Cola)',
           estimatedWeightGrams: 240,
           calories: 2,
           kcal: 2,
@@ -153,7 +284,7 @@ function generateMockFoodResponse(context?: string) {
     };
   }
 
-  // 2. Specific food items
+  // 5. Specific food items
   if (ctx.includes('apple')) {
     return {
       items: [
@@ -189,7 +320,7 @@ function generateMockFoodResponse(context?: string) {
       ],
     };
   }
-  if (ctx.includes('salad') || ctx.includes('broccoli') || ctx.includes('carrot')) {
+  if (ctx.includes('salad') || ctx.includes('broccoli') || ctx.includes('carrot') || ctx.includes('veggie')) {
     return {
       items: [
         { foodItem: 'Garden Vegetable Salad', name: 'Garden Vegetable Salad', estimatedWeightGrams: 160, calories: 120, kcal: 120, protein: 4, carbs: 14, fat: 6, macros: { protein: 4, carbs: 14, fat: 6 }, confidenceScore: 0.85, confidence: 0.85 },
@@ -204,10 +335,26 @@ function generateMockFoodResponse(context?: string) {
     };
   }
 
-  // 3. Balanced meal fallback (not locked to chicken)
+  // 6. Uploaded image visual cues handling (prevents Mediterranean Meal Bowl lock-in)
+  if (ctx.includes('fruit')) {
+    return {
+      items: [
+        { foodItem: 'Fresh Fruit Assortment', name: 'Fresh Fruit Assortment', estimatedWeightGrams: 150, calories: 85, kcal: 85, protein: 1, carbs: 21, fat: 0.2, macros: { protein: 1, carbs: 21, fat: 0.2 }, confidenceScore: 0.8, confidence: 0.8 },
+      ],
+    };
+  }
+  if (ctx.includes('green') || ctx.includes('salad')) {
+    return {
+      items: [
+        { foodItem: 'Mixed Greens Salad', name: 'Mixed Greens Salad', estimatedWeightGrams: 150, calories: 95, kcal: 95, protein: 3, carbs: 10, fat: 5, macros: { protein: 3, carbs: 10, fat: 5 }, confidenceScore: 0.8, confidence: 0.8 },
+      ],
+    };
+  }
+
+  // Balanced Entree Plate fallback
   return {
     items: [
-      { foodItem: 'Mediterranean Meal Bowl', name: 'Mediterranean Meal Bowl', estimatedWeightGrams: 320, calories: 420, kcal: 420, protein: 26, carbs: 46, fat: 12, macros: { protein: 26, carbs: 46, fat: 12 }, confidenceScore: 0.75, confidence: 0.75 },
+      { foodItem: 'Balanced Entree Plate', name: 'Balanced Entree Plate', estimatedWeightGrams: 300, calories: 380, kcal: 380, protein: 24, carbs: 40, fat: 12, macros: { protein: 24, carbs: 40, fat: 12 }, confidenceScore: 0.7, confidence: 0.7 },
     ],
   };
 }

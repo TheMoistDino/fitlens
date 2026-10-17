@@ -310,7 +310,234 @@ export class StepFunFoodAdapter {
   private createFallbackResponse(context?: string): StepFunFoodAnalysisResponse {
     const ctx = (context ?? '').toLowerCase();
 
-    // 1. Liquids / Beverages in containers
+    // 0. Cross-Section Photo Scan & Inside Inspection (R4)
+    if (
+      ctx.includes('cross-section') ||
+      ctx.includes('scan inside') ||
+      ctx.includes('inside cut') ||
+      ctx.includes('exposed')
+    ) {
+      const isSteakBeans = ctx.includes('steak') || ctx.includes('beans');
+      return {
+        items: [
+          {
+            foodItem: isSteakBeans
+              ? 'Burrito (Cross-Section: Steak & Black Beans)'
+              : 'Cross-Section Exposed Fillings',
+            estimatedWeightGrams: 380,
+            calories: isSteakBeans ? 710 : 680,
+            macros: {
+              protein: isSteakBeans ? 34 : 28,
+              carbs: isSteakBeans ? 78 : 85,
+              fat: isSteakBeans ? 24 : 24,
+            },
+            confidenceScore: 0.88,
+          },
+        ],
+        totalCalories: isSteakBeans ? 710 : 680,
+        source: 'mock',
+      };
+    }
+
+    // 0b. Composite Foods Standard Baselines (R4)
+    if (ctx.includes('burrito')) {
+      return {
+        items: [
+          {
+            foodItem: 'Burrito (Standard Baseline)',
+            estimatedWeightGrams: 380,
+            calories: 680,
+            macros: { protein: 28, carbs: 85, fat: 24 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 680,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('wrap')) {
+      return {
+        items: [
+          {
+            foodItem: 'Wrap (Standard Baseline)',
+            estimatedWeightGrams: 280,
+            calories: 520,
+            macros: { protein: 24, carbs: 52, fat: 22 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 520,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('calzone')) {
+      return {
+        items: [
+          {
+            foodItem: 'Calzone (Standard Baseline)',
+            estimatedWeightGrams: 350,
+            calories: 780,
+            macros: { protein: 34, carbs: 76, fat: 36 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 780,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('pot pie')) {
+      return {
+        items: [
+          {
+            foodItem: 'Chicken Pot Pie (Standard Baseline)',
+            estimatedWeightGrams: 320,
+            calories: 620,
+            macros: { protein: 20, carbs: 55, fat: 36 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 620,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('dumpling') || ctx.includes('gyoza')) {
+      return {
+        items: [
+          {
+            foodItem: 'Steamed Dumplings (Standard Baseline)',
+            estimatedWeightGrams: 160,
+            calories: 280,
+            macros: { protein: 12, carbs: 32, fat: 10 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 280,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('taco')) {
+      return {
+        items: [
+          {
+            foodItem: 'Taco (Standard Baseline)',
+            estimatedWeightGrams: 110,
+            calories: 230,
+            macros: { protein: 12, carbs: 18, fat: 11 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 230,
+        source: 'mock',
+      };
+    }
+
+    // 1. Milk & Non-Dark Dairy Drinks
+    if (
+      ctx.includes('milk') ||
+      ctx.includes('dairy') ||
+      ctx.includes('white liquid') ||
+      ctx.includes('creamy liquid')
+    ) {
+      return {
+        items: [
+          {
+            foodItem: 'Whole Milk',
+            estimatedWeightGrams: 240,
+            calories: 150,
+            macros: { protein: 8, carbs: 12, fat: 8 },
+            confidenceScore: 0.9,
+          },
+        ],
+        totalCalories: 150,
+        source: 'mock',
+      };
+    }
+
+    // 2. Canned Drinks & Energy Drinks
+    if (ctx.includes('celsius')) {
+      return {
+        items: [
+          {
+            foodItem: 'Celsius Sparkling Energy (Can)',
+            estimatedWeightGrams: 355,
+            calories: 10,
+            macros: { protein: 0, carbs: 0, fat: 0 },
+            confidenceScore: 0.95,
+          },
+        ],
+        totalCalories: 10,
+        source: 'mock',
+      };
+    }
+    if (ctx.includes('red bull')) {
+      return {
+        items: [
+          {
+            foodItem: 'Red Bull Energy Drink (Can)',
+            estimatedWeightGrams: 250,
+            calories: 110,
+            macros: { protein: 1, carbs: 28, fat: 0 },
+            confidenceScore: 0.95,
+          },
+        ],
+        totalCalories: 110,
+        source: 'mock',
+      };
+    }
+    if (ctx.includes('coke zero') || ctx.includes('diet coke') || ctx.includes('zero sugar')) {
+      return {
+        items: [
+          {
+            foodItem: 'Coca-Cola Zero Sugar (Can)',
+            estimatedWeightGrams: 355,
+            calories: 0,
+            macros: { protein: 0, carbs: 0, fat: 0 },
+            confidenceScore: 0.95,
+          },
+        ],
+        totalCalories: 0,
+        source: 'mock',
+      };
+    }
+    if (ctx.includes('can') || ctx.includes('canned')) {
+      return {
+        items: [
+          {
+            foodItem: 'Canned Beverage (Soda / Seltzer / Energy)',
+            estimatedWeightGrams: 355,
+            calories: 10,
+            macros: { protein: 0, carbs: 2, fat: 0 },
+            confidenceScore: 0.5,
+          },
+        ],
+        totalCalories: 10,
+        source: 'mock',
+      };
+    }
+
+    // 3. Juices
+    if (ctx.includes('orange juice') || ctx.includes('oj') || ctx.includes('juice')) {
+      return {
+        items: [
+          {
+            foodItem: 'Orange Juice',
+            estimatedWeightGrams: 240,
+            calories: 110,
+            macros: { protein: 2, carbs: 26, fat: 0.5 },
+            confidenceScore: 0.9,
+          },
+        ],
+        totalCalories: 110,
+        source: 'mock',
+      };
+    }
+
+    // 4. Liquids / Beverages in containers
     if (
       ctx.includes('cup') ||
       ctx.includes('bottle') ||
@@ -321,7 +548,7 @@ export class StepFunFoodAdapter {
       return {
         items: [
           {
-            foodItem: 'Beverage (Coffee / Tea / Cola)',
+            foodItem: 'Beverage (Milk / Coffee / Cola)',
             estimatedWeightGrams: 240,
             calories: 2,
             macros: { protein: 0.2, carbs: 0.3, fat: 0 },
@@ -333,7 +560,7 @@ export class StepFunFoodAdapter {
       };
     }
 
-    // 2. Common detected foods
+    // 5. Common detected foods
     if (ctx.includes('apple')) {
       return {
         items: [
@@ -412,11 +639,11 @@ export class StepFunFoodAdapter {
         ]
       : [
           {
-            foodItem: 'Mediterranean Bowl',
-            estimatedWeightGrams: 320,
-            calories: 460,
-            macros: { protein: 32, carbs: 48, fat: 14 },
-            confidenceScore: 0.6,
+            foodItem: 'Balanced Entree Plate',
+            estimatedWeightGrams: 300,
+            calories: 380,
+            macros: { protein: 24, carbs: 40, fat: 12 },
+            confidenceScore: 0.7,
           },
         ];
 

@@ -65,10 +65,15 @@ describe('Food Recognition Accuracy & Liquid Disambiguation Suite', () => {
     assert.strictEqual(latte.calories, 150);
     assert.strictEqual(latte.protein, 8);
 
-    const water = matchBeverageByName('sparkling water');
+    const water = matchBeverageByName('water');
     assert.ok(water);
     assert.strictEqual(water.id, 'water');
     assert.strictEqual(water.calories, 0);
+
+    const seltzer = matchBeverageByName('sparkling water');
+    assert.ok(seltzer);
+    assert.strictEqual(seltzer.id, 'seltzer-can');
+    assert.strictEqual(seltzer.calories, 0);
   });
 
   it('should provide context-aware fallback in StepFunFoodAdapter when offline or key is missing', async () => {

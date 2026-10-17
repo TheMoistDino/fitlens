@@ -97,29 +97,40 @@ export class FoodDetectionService {
   }
 
   /**
-   * Performs real-time inference on a video frame and extracts 3D viewport spatial coordinates.
-   * Safe to call on every animation frame (30–60 FPS).
+   * Performs real-time inference on a video frame, image, or canvas.
+   * Safe to call on camera frames or uploaded images.
    *
-   * @param video HTML5 video element providing raw stream frames
+   * @param source HTML5 video, image, or canvas providing pixels
    * @param timestamp High-resolution timestamp in milliseconds
    * @param viewport Three.js canvas size in CSS pixels (e.g. from useThree() or container rect)
    * @param mirror Whether to mirror the X-axis (for selfie/user-facing camera)
    */
   detect(
-    video: HTMLVideoElement,
-    timestamp: number,
+    source: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement,
+    timestamp: number = performance.now(),
     viewport: ViewportDimensions = { width: 1, height: 1 },
     mirror = false,
   ): DetectedFoodItem[] {
     if (!this.detector || !this.ready) return [];
 
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
+    let vw = 0;
+    let vh = 0;
+    if ('videoWidth' in source && source.videoWidth) {
+      vw = source.videoWidth;
+      vh = source.videoHeight;
+    } else if ('naturalWidth' in source && source.naturalWidth) {
+      vw = source.naturalWidth;
+      vh = source.naturalHeight;
+    } else if ('width' in source && source.width) {
+      vw = source.width;
+      vh = source.height;
+    }
+
     if (!vw || !vh) return [];
 
     try {
       const monotonicTs = this.clock(timestamp);
-      const { detections } = this.detector.detectForVideo(video, monotonicTs);
+      const { detections } = this.detector.detectForVideo(source, monotonicTs);
       if (!detections || detections.length === 0) {
         this.currentItems = [];
         return [];

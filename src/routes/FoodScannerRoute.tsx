@@ -1,10 +1,10 @@
 import * as Sentry from '@sentry/react';
-import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/app/providers';
 import type { MacroItem, MacroSummary } from '@/core/events/events';
 import { sessionLog } from '@/features/dashboard/useSessionLog';
-import { FoodOverlayCanvas, FoodImageUploader } from '@/features/food-scanner/components';
+import { FoodOverlayCanvas, FoodTooltipCard, FoodImageUploader } from '@/features/food-scanner/components';
 import {
   FoodDetectionService,
   FrameSampler,
@@ -12,12 +12,15 @@ import {
   foodScannerBus,
   isLiquidContainer,
   BEVERAGE_PRESETS,
+  generateCanWebSearchUrl,
   type BoundingBox2D,
   type DetectedFoodItem,
   type MealLoggedPayload,
   type StepFunFoodItem,
+  type ProcessedImageResult,
+  type VisualAnalysisResult,
 } from '@/features/food-scanner/services';
-import { useFoodLogStore } from '@/features/food-scanner/store';
+import { useFoodLogStore, useNutritionHUD } from '@/features/food-scanner/store';
 import { sponsorBus } from '@/lib/sponsors/SponsorEventBus';
 import { glassesController } from '@/lib/sponsors/smart-glasses/glassesPlugin';
 import { useCameraStream, type FrameCallback } from '@/services/camera/useCameraStream';
@@ -144,6 +147,28 @@ export default function FoodScannerRoute() {
   const initialMode = searchParams.get('mode') === 'upload' ? 'upload' : 'camera';
   const [activeMode, setActiveMode] = useState<'camera' | 'upload'>(initialMode);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [uploadedVisuals, setUploadedVisuals] = useState<VisualAnalysisResult | null>(null);
+
+  // Camera Stream Mode & Review State (R3)
+  const [streamMode, setStreamMode] = useState<'live' | 'review'>('live');
+  const [frozenFrame, setFrozenFrame] = useState<string | null>(null);
+  const [frozenBoxes, setFrozenBoxes] = useState<DetectedFoodItem[]>([]);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const streamModeRef = useRef<'live' | 'review'>('live');
+  streamModeRef.current = streamMode;
+
+  // Real-time Daily Nutrition Log & Goals (Accessible below viewport)
+  const {
+    todayLogs,
+    dailyGoals,
+    totals: dailyTotals,
+    remaining: dailyRemaining,
+    removeMeal,
+  } = useNutritionHUD();
+
+  // Video aspect ratio tracking for object-cover Three.js alignment
+  const [videoAspect, setVideoAspect] = useState<number>(16 / 9);
+  const videoAspectRef = useRef<number>(16 / 9);
 
   // Defensive Degradation States
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -324,7 +349,7 @@ export default function FoodScannerRoute() {
 
   // Cold path: Multimodal StepFun AI Nutrition Estimation for Uploaded Photos
   const triggerImageUploadScan = useCallback(
-    async (imageDataUrl: string) => {
+    async (imageDataUrl: string, processedResult?: ProcessedImageResult) => {
       if (analyzing) return;
 
       if (rateLimitCooldown !== null && rateLimitCooldown > 0) {
@@ -334,6 +359,50 @@ export default function FoodScannerRoute() {
 
       setAnalyzing(true);
       setScanError(null);
+
+      // Run on-device detector on the uploaded image element if available
+      let detectedLabels = '';
+      if (processedResult?.imageElement && detectorRef.current?.ready) {
+        try {
+          const detected = detectorRef.current.detect(
+            processedResult.imageElement,
+            Date.now(),
+            { width: processedResult.width, height: processedResult.height },
+            false,
+          );
+          boxesRef.current = detected;
+          detectedLabels = detected.map((b) => b.label).join(', ');
+        } catch (err) {
+          console.warn('[FoodScannerRoute] On-device image detection dropped:', err);
+        }
+      }
+
+      // Build rich context from detected labels, can text, and visual cues
+      const contextParts: string[] = [];
+      if (detectedLabels) {
+        contextParts.push(`Detected items: ${detectedLabels}`);
+      }
+      if (processedResult?.visuals) {
+        setUploadedVisuals(processedResult.visuals);
+        const { detectedText, isLightLiquid, isCanLike, detectedCategoryHint } = processedResult.visuals;
+        if (detectedText) {
+          contextParts.push(`Can label text reads: "${detectedText}"`);
+        }
+        if (isLightLiquid) {
+          contextParts.push(`Visual appearance: White creamy liquid in container (milk/dairy)`);
+        }
+        if (isCanLike) {
+          contextParts.push(`Container appearance: Tall cylindrical can or bottle`);
+        }
+        if (detectedCategoryHint && detectedCategoryHint !== 'meal') {
+          contextParts.push(`Category hint: ${detectedCategoryHint}`);
+        }
+      }
+
+      const context =
+        contextParts.length > 0
+          ? contextParts.join('. ')
+          : 'Uploaded food photo. Identify food items, portion weights, calories, and macros.';
 
       timeoutRef.current = setTimeout(() => {
         setAnalyzing(false);
@@ -352,7 +421,7 @@ export default function FoodScannerRoute() {
           try {
             const result = await adapterRef.current.estimateNutrition(
               imageDataUrl,
-              'Uploaded food photo. Identify food items, portion weights, calories, and macros.',
+              context,
             );
             if (!result.ok) {
               const errMsg = result.error.message.toLowerCase();
@@ -374,6 +443,20 @@ export default function FoodScannerRoute() {
   const onFrame = useCallback<FrameCallback>(
     (video, { now, frameIndex }) => {
       videoElementRef.current = video;
+
+      // Track video aspect ratio for object-cover Three.js alignment
+      if (video.videoWidth && video.videoHeight) {
+        const currentAspect = video.videoWidth / video.videoHeight;
+        if (Math.abs(currentAspect - videoAspectRef.current) > 0.01) {
+          videoAspectRef.current = currentAspect;
+          setVideoAspect(currentAspect);
+        }
+      }
+
+      // In review mode, suspend MediaPipe inference and luminance sampling
+      if (streamModeRef.current === 'review') {
+        return;
+      }
 
       // Sample luminance every ~60 frames (approx. once per second)
       if (frameIndex % 60 === 0) {
@@ -458,6 +541,79 @@ export default function FoodScannerRoute() {
     (t, i) => ({ p: t.p + i.protein, c: t.c + i.carbs, f: t.f + i.fat }),
     { p: 0, c: 0, f: 0 },
   );
+
+  // Freeze camera feed and snapshot frame for review mode (R3)
+  const handleTakeImageAndInspect = useCallback(() => {
+    const video = videoElementRef.current;
+    if (!video || !video.videoWidth) {
+      toast('Camera feed not ready to capture', 'warn');
+      return;
+    }
+
+    // 1. Snapshot video frame to HTML5 canvas Data URL
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      if (mirror) {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frameUrl = canvas.toDataURL('image/jpeg', 0.92);
+      setFrozenFrame(frameUrl);
+    }
+
+    // 2. Snapshot current detected boxes
+    const currentDetections = [...boxesRef.current];
+    setFrozenBoxes(currentDetections);
+
+    // 3. Pause video playback (freezes video without stopping MediaStream tracks)
+    try {
+      video.pause();
+    } catch (err) {
+      console.warn('[FoodScannerRoute] Video pause error:', err);
+    }
+
+    // 4. Enter review mode
+    setStreamMode('review');
+
+    // 5. Auto-select first item if detected so inspection options are immediately available
+    if (currentDetections.length > 0 && currentDetections[0]) {
+      setSelectedItemId(currentDetections[0].id);
+    }
+
+    toast('Live feed paused. Tap any food item to inspect or customize fillings.', 'info');
+  }, [mirror, toast]);
+
+  // Resume continuous live scanning (R3)
+  const handleResumeLive = useCallback(() => {
+    const video = videoElementRef.current;
+    if (video) {
+      try {
+        void video.play();
+      } catch (err) {
+        console.warn('[FoodScannerRoute] Video play error:', err);
+      }
+    }
+
+    setStreamMode('live');
+    setFrozenFrame(null);
+    setFrozenBoxes([]);
+    setSelectedItemId(null);
+    toast('Resumed continuous 60 FPS live scanning', 'info');
+  }, [toast]);
+
+  // Selected item in review mode
+  const selectedItem = useMemo(() => {
+    if (streamMode !== 'review') return null;
+    if (selectedItemId) {
+      const match = frozenBoxes.find((b) => b.id === selectedItemId);
+      if (match) return match;
+    }
+    return frozenBoxes.length > 0 && frozenBoxes[0] ? frozenBoxes[0] : null;
+  }, [streamMode, selectedItemId, frozenBoxes]);
 
   /**
    * End-to-End Meal Logging:
@@ -604,103 +760,9 @@ export default function FoodScannerRoute() {
 
   return (
     <div className="space-y-4">
-      {/* Route Header */}
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight">WebAR Macro Tracker</h1>
-          <p className="text-sm text-neutral-400">
-            {activeMode === 'camera'
-              ? 'Point at your plate, hold steady or tap Deep Scan'
-              : 'Upload or drag & drop a food photo for AI caloric estimation'}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {activeMode === 'camera' && stabilityDetected && <Badge tone="good">Frame Stable</Badge>}
-          {!isOnline && <Badge tone="warn">Offline Mode</Badge>}
-          {activeMode === 'camera' && isLowLight && <Badge tone="warn">Low Light</Badge>}
-          {rateLimitCooldown !== null && (
-            <Badge tone="warn">Rate Limited ({rateLimitCooldown}s)</Badge>
-          )}
-          {activeMode === 'camera' ? (
-            <Badge tone={detectorReady ? 'good' : detectorReady === false ? 'warn' : 'neutral'}>
-              Local ML: {detectorReady === null ? 'Loading…' : detectorReady ? '60 FPS' : 'Fallback'}
-            </Badge>
-          ) : (
-            <Badge tone="good">Mode: Photo Upload</Badge>
-          )}
-        </div>
-      </header>
-
-      {/* Mode Switcher Tabs */}
-      <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
-        <div className="flex gap-1 rounded-xl bg-neutral-900 p-1">
-          <button
-            type="button"
-            onClick={() => handleSwitchMode('camera')}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-              activeMode === 'camera'
-                ? 'bg-emerald-500 text-black shadow-sm'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-              />
-            </svg>
-            Live AR Camera
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSwitchMode('upload')}
-            className={`flex items-center gap-2 rounded-lg px-3.5 py-1.5 text-xs font-semibold transition ${
-              activeMode === 'upload'
-                ? 'bg-emerald-500 text-black shadow-sm'
-                : 'text-neutral-400 hover:text-white'
-            }`}
-          >
-            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
-              />
-            </svg>
-            Upload Photo
-          </button>
-        </div>
-
-        {activeMode === 'upload' && uploadedImageUrl && (
-          <span className="text-xs text-neutral-400 hidden sm:inline">Photo loaded</span>
-        )}
-      </div>
-
-      {/* Defensive Alerts */}
-      {!isOnline && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          <span>Offline mode active: estimates will use local heuristics without cloud AI.</span>
-        </div>
-      )}
-
-      {activeMode === 'camera' && isLowLight && (
-        <div className="flex items-center justify-between rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-          <span>Low ambient light detected. Please ensure food is illuminated for optimal detection.</span>
-        </div>
-      )}
-
-      {/* Main Viewport: Camera or Image Upload */}
+      {/* Main Viewport: Camera with Floating HUDs, or Image Upload */}
       {activeMode === 'camera' ? (
-        <>
+        <div className="relative">
           <CameraViewport
             videoRef={camera.videoRef}
             status={camera.status}
@@ -708,21 +770,253 @@ export default function FoodScannerRoute() {
             mirror={mirror}
             onRetry={() => void camera.start()}
           >
+            {/* Frozen Frame Snapshot Overlay during Review Mode */}
+            {streamMode === 'review' && frozenFrame && (
+              <img
+                src={frozenFrame}
+                alt="Captured meal preview"
+                className="absolute inset-0 h-full w-full object-cover pointer-events-none z-10"
+              />
+            )}
+
             <FoodOverlayCanvas
               boxesRef={boxesRef}
+              frozenBoxes={streamMode === 'review' ? frozenBoxes : undefined}
+              isReviewMode={streamMode === 'review'}
+              selectedItemId={selectedItemId}
+              onSelectItem={(id) => setSelectedItemId(id)}
               macros={macros}
               detailedItems={detailedItems}
               mirror={mirror}
+              videoAspect={videoAspect}
               analyzing={analyzing}
               onAnalyze={() => void triggerCloudScan(boxesRef.current[0]?.box2d ?? null, 'manual')}
               onMealLogged={(meal) => void handleLogMeal(meal)}
               onAdjustMacros={handleOpenManualAdjust}
             />
+
+            {/* Floating Top HUD (Status Badges & Mode Switch - R1 & R2) */}
+            <div className="absolute top-3 inset-x-3 z-30 pointer-events-none flex items-center justify-between gap-2">
+              {/* Mode Switcher Glass Pill */}
+              <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/80 p-1 shadow-lg backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchMode('camera')}
+                  className="flex items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1 text-xs font-semibold text-black shadow-sm transition"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
+                    />
+                  </svg>
+                  <span>Live AR</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchMode('upload')}
+                  className="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold text-neutral-300 hover:text-white transition"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                    />
+                  </svg>
+                  <span>Upload</span>
+                </button>
+              </div>
+
+              {/* Status Badges & Flip Camera Pill */}
+              <div className="flex items-center gap-1.5">
+                {stabilityDetected && (
+                  <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-neutral-950/80 px-2.5 py-1 text-[11px] font-medium text-emerald-300 backdrop-blur-md">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Frame Stable
+                  </span>
+                )}
+                {!isOnline && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-neutral-950/80 px-2.5 py-1 text-[11px] font-medium text-amber-300 backdrop-blur-md">
+                    Offline
+                  </span>
+                )}
+                {isLowLight && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-neutral-950/80 px-2.5 py-1 text-[11px] font-medium text-amber-300 backdrop-blur-md">
+                    Low Light
+                  </span>
+                )}
+                {rateLimitCooldown !== null && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-neutral-950/80 px-2.5 py-1 text-[11px] font-medium text-amber-300 backdrop-blur-md">
+                    Rate Limited ({rateLimitCooldown}s)
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/80 px-2.5 py-1 text-[11px] font-medium text-neutral-200 backdrop-blur-md">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${detectorReady ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                  />
+                  {detectorReady === null ? 'Loading ML' : detectorReady ? '60 FPS' : 'Fallback'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void camera.switchCamera()}
+                  title="Flip camera"
+                  aria-label="Flip camera"
+                  className="pointer-events-auto rounded-full border border-white/10 bg-neutral-950/80 p-1.5 text-neutral-300 hover:text-white transition shadow-lg backdrop-blur-md active:scale-95 cursor-pointer"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                    />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Paused Review Item Detailed Inspection Card (R3 & R4) */}
+            {streamMode === 'review' && selectedItem && (
+              <div className="absolute bottom-20 inset-x-3 z-30 flex justify-center pointer-events-none">
+                <div className="pointer-events-auto max-h-[65vh] overflow-y-auto w-full max-w-sm rounded-2xl shadow-2xl">
+                  <FoodTooltipCard
+                    item={selectedItem}
+                    macroItem={
+                      macros?.items.find((_, i) => frozenBoxes[i]?.id === selectedItem.id) ?? null
+                    }
+                    detailedItem={
+                      detailedItems.find((_, i) => frozenBoxes[i]?.id === selectedItem.id) ?? null
+                    }
+                    analyzing={analyzing}
+                    onAnalyze={() => void triggerCloudScan(selectedItem.box2d ?? null, 'manual')}
+                    onLogged={(meal) => void handleLogMeal(meal)}
+                    onAdjust={handleOpenManualAdjust}
+                    onClose={() => setSelectedItemId(null)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Floating Bottom Shutter Bar (R1, R2, R3) */}
+            <div className="absolute bottom-4 inset-x-4 z-30 pointer-events-none flex flex-wrap items-center justify-center gap-3">
+              {streamMode === 'live' ? (
+                <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-neutral-950/85 p-1.5 shadow-2xl backdrop-blur-md">
+                  <button
+                    type="button"
+                    onClick={() => handleSwitchMode('upload')}
+                    title="Upload photo mode"
+                    aria-label="Upload photo mode"
+                    className="rounded-full bg-white/5 p-2.5 text-neutral-300 hover:bg-white/15 hover:text-white transition cursor-pointer"
+                  >
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"
+                      />
+                    </svg>
+                  </button>
+
+                  {/* Prominent Center Shutter Button */}
+                  <button
+                    type="button"
+                    onClick={handleTakeImageAndInspect}
+                    disabled={camera.status !== 'streaming'}
+                    aria-label="Take Image and Inspect"
+                    className="flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 px-5 py-2.5 text-sm font-bold text-black shadow-[0_0_25px_rgba(16,185,129,0.5)] hover:from-emerald-400 hover:to-teal-300 active:scale-95 transition disabled:opacity-50 cursor-pointer"
+                  >
+                    <span className="text-base">📸</span>
+                    <span>Take Image / Inspect</span>
+                  </button>
+
+                  {/* Deep Scan Plate Button */}
+                  <button
+                    type="button"
+                    onClick={() => void triggerCloudScan(boxesRef.current[0]?.box2d ?? null, 'manual')}
+                    disabled={camera.status !== 'streaming' || analyzing || rateLimitCooldown !== null}
+                    title="Deep Scan with StepFun AI"
+                    aria-label="Deep Scan Plate"
+                    className="flex items-center gap-1.5 rounded-full bg-white/10 px-3.5 py-2.5 text-xs font-semibold text-neutral-200 hover:bg-white/20 hover:text-white transition disabled:opacity-50 cursor-pointer"
+                  >
+                    <span>⚡</span>
+                    <span className="hidden sm:inline">{analyzing ? 'Analyzing…' : 'Deep Scan'}</span>
+                  </button>
+
+                  {/* Log Plate shortcut if macros present */}
+                  {macros && (
+                    <button
+                      type="button"
+                      onClick={() => void handleLogMeal()}
+                      title="Log Entire Plate"
+                      aria-label="Log Entire Plate"
+                      className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-2.5 text-xs font-semibold text-white hover:bg-emerald-500 transition cursor-pointer"
+                    >
+                      <span>🥗</span>
+                      <span className="hidden sm:inline">Log Plate</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-neutral-950/90 p-1.5 shadow-2xl backdrop-blur-md">
+                  {/* Retake / Resume Live Button */}
+                  <button
+                    type="button"
+                    onClick={handleResumeLive}
+                    aria-label="Retake and Resume Live"
+                    className="flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-500 to-blue-500 px-4 py-2 text-xs sm:text-sm font-bold text-white shadow-[0_0_20px_rgba(6,182,212,0.4)] hover:from-cyan-400 hover:to-blue-400 active:scale-95 transition cursor-pointer"
+                  >
+                    <span>🔄</span>
+                    <span>Retake / Live</span>
+                  </button>
+
+                  {frozenBoxes.length > 0 && !selectedItemId && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedItemId(frozenBoxes[0]?.id ?? null)}
+                      className="rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-white/20 transition cursor-pointer"
+                    >
+                      Inspect {frozenBoxes[0]?.label}
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void triggerCloudScan(frozenBoxes[0]?.box2d ?? null, 'manual')}
+                    disabled={analyzing || rateLimitCooldown !== null}
+                    className="rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-neutral-200 hover:bg-white/20 transition disabled:opacity-50 cursor-pointer"
+                  >
+                    ⚡ {analyzing ? 'Analyzing…' : 'Deep Scan'}
+                  </button>
+
+                  {macros && (
+                    <button
+                      type="button"
+                      onClick={() => void handleLogMeal()}
+                      className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 transition cursor-pointer"
+                    >
+                      <span>🥗</span>
+                      <span>Log Plate</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </CameraViewport>
 
           {/* Graceful Fallback Prompt if Camera Permission Denied or Failed */}
           {camera.status === 'error' && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-700 bg-neutral-900/90 p-4">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-700 bg-neutral-900/90 p-4">
               <div>
                 <p className="text-sm font-semibold text-neutral-200">Camera unavailable?</p>
                 <p className="text-xs text-neutral-400">
@@ -734,47 +1028,52 @@ export default function FoodScannerRoute() {
               </Button>
             </div>
           )}
-
-          {/* Camera Control Actions Bar */}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => void triggerCloudScan(boxesRef.current[0]?.box2d ?? null, 'manual')}
-              disabled={camera.status !== 'streaming' || analyzing || rateLimitCooldown !== null}
-            >
-              {analyzing ? 'Analyzing with StepFun…' : 'Deep Scan Plate'}
-            </Button>
-            <Button variant="secondary" onClick={() => void camera.switchCamera()}>
-              Flip Camera
-            </Button>
-            <Button variant="secondary" onClick={() => handleSwitchMode('upload')}>
-              Upload Photo Instead
-            </Button>
-            {macros && (
-              <Button variant="secondary" onClick={() => void handleLogMeal()}>
-                Log Entire Plate
-              </Button>
-            )}
-          </div>
-        </>
+        </div>
       ) : (
-        <>
-          {/* Upload Photo Dropzone / Preview */}
+        <div className="space-y-4">
+          {/* Upload Mode Header & Switcher */}
+          <header className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">Photo Upload Mode</h1>
+              <p className="text-sm text-neutral-400">
+                Upload or drag & drop a food photo for AI caloric estimation
+              </p>
+            </div>
+            <div className="flex gap-1 rounded-xl bg-neutral-900 p-1">
+              <button
+                type="button"
+                onClick={() => handleSwitchMode('camera')}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-neutral-400 hover:text-white transition"
+              >
+                Live AR Camera
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchMode('upload')}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-black shadow-sm transition"
+              >
+                Upload Photo
+              </button>
+            </div>
+          </header>
+
           <FoodImageUploader
             previewUrl={uploadedImageUrl}
             analyzing={analyzing}
             onImageProcessed={(result) => {
               setUploadedImageUrl(result.dataUrl);
-              void triggerImageUploadScan(result.dataUrl);
+              setUploadedVisuals(result.visuals ?? null);
+              void triggerImageUploadScan(result.dataUrl, result);
             }}
             onClear={() => {
               setUploadedImageUrl(null);
+              setUploadedVisuals(null);
               setMacros(null);
               setDetailedItems([]);
               setScanError(null);
             }}
           />
 
-          {/* Upload Mode Actions Bar */}
           <div className="flex flex-wrap gap-2">
             {uploadedImageUrl && (
               <Button
@@ -793,7 +1092,7 @@ export default function FoodScannerRoute() {
               Switch to Live Camera
             </Button>
           </div>
-        </>
+        </div>
       )}
 
       {scanError && <p className="text-sm text-rose-300">{scanError}</p>}
@@ -820,6 +1119,25 @@ export default function FoodScannerRoute() {
             <StatPill label="Carbs" value={`${Math.round(totals.c)}g`} />
             <StatPill label="Fat" value={`${Math.round(totals.f)}g`} />
           </div>
+
+          {uploadedVisuals?.detectedText && (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-cyan-500/30 bg-cyan-950/40 px-3 py-2 text-xs text-cyan-200">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold">🥫 Can / Label OCR:</span>
+                <span className="rounded bg-black/40 px-2 py-0.5 font-mono text-cyan-300">
+                  &ldquo;{uploadedVisuals.detectedText}&rdquo;
+                </span>
+              </div>
+              <a
+                href={generateCanWebSearchUrl(uploadedVisuals.detectedText)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded bg-cyan-600/30 px-2 py-1 text-[11px] font-medium text-cyan-300 hover:bg-cyan-600/50 hover:text-white transition"
+              >
+                🔍 Search Nutrition
+              </a>
+            </div>
+          )}
 
           <ul className="divide-y divide-neutral-800 text-sm">
             {macros.items.map((item, idx) => {
@@ -891,6 +1209,88 @@ export default function FoodScannerRoute() {
         </Card>
       )}
 
+      {/* Downstream Scrollable Content: Daily Summary & Activity History (R1 & R4) */}
+      <div className="space-y-4 pt-2">
+        <Card
+          title="Today's Nutrition Summary"
+          action={
+            <Badge tone={dailyTotals.calories > dailyGoals.calories ? 'warn' : 'good'}>
+              {dailyTotals.calories} / {dailyGoals.calories} kcal
+            </Badge>
+          }
+        >
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <StatPill
+              label="Calories Left"
+              value={`${Math.max(0, dailyRemaining.calories)} kcal`}
+              tone={dailyRemaining.calories <= 0 ? 'warn' : 'good'}
+            />
+            <StatPill label="Protein" value={`${dailyTotals.protein}g / ${dailyGoals.protein}g`} />
+            <StatPill label="Carbs" value={`${dailyTotals.carbs}g / ${dailyGoals.carbs}g`} />
+            <StatPill label="Fat" value={`${dailyTotals.fat}g / ${dailyGoals.fat}g`} />
+          </div>
+        </Card>
+
+        <Card
+          title="Today's Activity Log"
+          action={
+            <Badge tone={todayLogs.length > 0 ? 'good' : 'neutral'}>
+              {todayLogs.length} {todayLogs.length === 1 ? 'Meal' : 'Meals'}
+            </Badge>
+          }
+        >
+          {todayLogs.length === 0 ? (
+            <div className="py-6 text-center text-sm text-neutral-400">
+              <p>No meals logged today yet.</p>
+              <p className="mt-1 text-xs text-neutral-500">
+                Point at your plate in Live AR and tap 📸 Take Image / Inspect to log.
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-neutral-800 text-sm">
+              {todayLogs.map((meal) => (
+                <li key={meal.id} className="flex items-center justify-between py-2.5">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-white">{meal.name}</span>
+                      <span className="rounded-full bg-white/5 px-2 py-0.5 text-[10px] text-neutral-400">
+                        {new Date(meal.timestamp).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                      {meal.source && (
+                        <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300 border border-emerald-500/20">
+                          {meal.source === 'stepfun' ? 'AI' : meal.source === 'upload' ? 'Upload' : 'Manual'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-xs text-neutral-400">
+                      P: {meal.protein}g · C: {meal.carbs}g · F: {meal.fat}g
+                      {meal.weightGrams ? ` · ${meal.weightGrams}g` : ''}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="tabular-nums font-semibold text-neutral-200">
+                      {meal.calories} kcal
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeMeal(meal.id)}
+                      title="Remove entry"
+                      aria-label={`Remove ${meal.name}`}
+                      className="rounded p-1 text-xs text-neutral-500 hover:text-rose-400 transition cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </div>
+
       {/* Manual Fallback Override Dialog */}
       {manualAdjustModal && (
         <div
@@ -912,16 +1312,28 @@ export default function FoodScannerRoute() {
               {(isLiquidContainer(manualAdjustModal.item.label) ||
                 manualAdjustModal.nutrition.name.toLowerCase().includes('cup') ||
                 manualAdjustModal.nutrition.name.toLowerCase().includes('bottle') ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('can') ||
                 manualAdjustModal.nutrition.name.toLowerCase().includes('drink') ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('milk') ||
                 manualAdjustModal.nutrition.name.toLowerCase().includes('beverage')) && (
                 <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/40 p-2.5">
-                  <span className="block text-xs font-semibold text-cyan-200">
-                    🥤 Quick Drink Presets (Coffee vs. Tea vs. Cola)
-                  </span>
+                  <div className="flex items-center justify-between">
+                    <span className="block text-xs font-semibold text-cyan-200">
+                      🥤 Quick Drink Presets (Milk, Cans, Coffee, Tea, Soda)
+                    </span>
+                    <a
+                      href={generateCanWebSearchUrl(manualAdjustModal.nutrition.name || 'beverage')}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-cyan-400 underline hover:text-cyan-300"
+                    >
+                      Web Search Nutrition ↗
+                    </a>
+                  </div>
                   <p className="mt-0.5 text-[11px] text-neutral-300">
-                    Dark-brown drinks have small differences. Tap to auto-populate:
+                    Tap to auto-populate exact nutrition profile:
                   </p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="mt-2 flex max-h-36 flex-wrap gap-1.5 overflow-y-auto">
                     {BEVERAGE_PRESETS.map((bev) => (
                       <button
                         key={bev.id}
@@ -955,7 +1367,19 @@ export default function FoodScannerRoute() {
               )}
 
               <div>
-                <label className="block text-xs font-medium text-neutral-300">Food Name</label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-medium text-neutral-300">Food / Drink Name</label>
+                  {manualAdjustModal.nutrition.name && (
+                    <a
+                      href={generateCanWebSearchUrl(manualAdjustModal.nutrition.name)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[11px] text-cyan-400 underline hover:text-cyan-300"
+                    >
+                      🔍 Search USDA / Web
+                    </a>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={manualAdjustModal.nutrition.name}
