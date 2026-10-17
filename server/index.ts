@@ -86,20 +86,131 @@ const FoodItems = z.object({
 const PoseNotes = z.object({ formNotes: z.string() });
 
 const PROMPTS = {
-  food: `You are a nutrition vision model. Identify each distinct food item in the photo and estimate its portion.
+  food: `You are a nutrition vision model. Identify each distinct food item or beverage in the photo and estimate its portion.
+If a cup, mug, glass, or bottle contains a liquid (e.g. coffee, tea, cola, water), identify the specific drink. If visually ambiguous (e.g. coffee vs tea vs cola), note "Beverage (Coffee/Tea/Cola)" with confidenceScore 0.5 to allow user disambiguation.
 Reply ONLY with JSON: {"items":[{"foodItem":string,"name":string,"estimatedWeightGrams":number,"calories":number,"kcal":number,"macros":{"protein":number,"carbs":number,"fat":number},"protein":number,"carbs":number,"fat":number,"confidenceScore":number 0-1}]}.
-Grams for macros. Return {"items":[]} if no food is visible.`,
+Grams for macros. Return {"items":[]} if no food or beverage is visible.`,
   pose: `You are a strength coach looking at one frame of a user exercising.
 Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cues (max 25 words). Be encouraging.`,
 };
 
-const MOCK_FOOD = {
-  items: [
-    { foodItem: 'Grilled chicken', name: 'Grilled chicken', estimatedWeightGrams: 180, calories: 280, kcal: 280, protein: 52, carbs: 0, fat: 6, macros: { protein: 52, carbs: 0, fat: 6 }, confidenceScore: 0.85, confidence: 0.85 },
-    { foodItem: 'White rice', name: 'White rice', estimatedWeightGrams: 150, calories: 205, kcal: 205, protein: 4, carbs: 45, fat: 0.4, macros: { protein: 4, carbs: 45, fat: 0.4 }, confidenceScore: 0.85, confidence: 0.85 },
-    { foodItem: 'Broccoli', name: 'Broccoli', estimatedWeightGrams: 100, calories: 55, kcal: 55, protein: 4, carbs: 11, fat: 0.6, macros: { protein: 4, carbs: 11, fat: 0.6 }, confidenceScore: 0.85, confidence: 0.85 },
-  ],
-};
+function generateMockFoodResponse(context?: string) {
+  const ctx = (context ?? '').toLowerCase();
+
+  // 1. Liquid containers / Beverages
+  if (
+    ctx.includes('cup') ||
+    ctx.includes('bottle') ||
+    ctx.includes('wine glass') ||
+    ctx.includes('drink') ||
+    ctx.includes('beverage')
+  ) {
+    if (ctx.includes('coffee')) {
+      return {
+        items: [
+          { foodItem: 'Black Coffee', name: 'Black Coffee', estimatedWeightGrams: 240, calories: 2, kcal: 2, protein: 0.3, carbs: 0.2, fat: 0, macros: { protein: 0.3, carbs: 0.2, fat: 0 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    if (ctx.includes('tea')) {
+      return {
+        items: [
+          { foodItem: 'Unsweetened Tea', name: 'Unsweetened Tea', estimatedWeightGrams: 240, calories: 2, kcal: 2, protein: 0, carbs: 0.4, fat: 0, macros: { protein: 0, carbs: 0.4, fat: 0 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    if (ctx.includes('cola') || ctx.includes('soda')) {
+      return {
+        items: [
+          { foodItem: 'Regular Cola', name: 'Regular Cola', estimatedWeightGrams: 355, calories: 140, kcal: 140, protein: 0, carbs: 39, fat: 0, macros: { protein: 0, carbs: 39, fat: 0 }, confidenceScore: 0.9, confidence: 0.9 },
+        ],
+      };
+    }
+    if (ctx.includes('water')) {
+      return {
+        items: [
+          { foodItem: 'Water', name: 'Water', estimatedWeightGrams: 250, calories: 0, kcal: 0, protein: 0, carbs: 0, fat: 0, macros: { protein: 0, carbs: 0, fat: 0 }, confidenceScore: 0.95, confidence: 0.95 },
+        ],
+      };
+    }
+    // Ambiguous dark liquid in cup/bottle: return low confidence to trigger liquid disambiguation flow
+    return {
+      items: [
+        {
+          foodItem: 'Beverage (Coffee / Tea / Cola)',
+          name: 'Beverage (Coffee / Tea / Cola)',
+          estimatedWeightGrams: 240,
+          calories: 2,
+          kcal: 2,
+          protein: 0.2,
+          carbs: 0.3,
+          fat: 0,
+          macros: { protein: 0.2, carbs: 0.3, fat: 0 },
+          confidenceScore: 0.5,
+          confidence: 0.5,
+        },
+      ],
+    };
+  }
+
+  // 2. Specific food items
+  if (ctx.includes('apple')) {
+    return {
+      items: [
+        { foodItem: 'Fresh Apple', name: 'Fresh Apple', estimatedWeightGrams: 182, calories: 95, kcal: 95, protein: 0.5, carbs: 25, fat: 0.3, macros: { protein: 0.5, carbs: 25, fat: 0.3 }, confidenceScore: 0.9, confidence: 0.9 },
+      ],
+    };
+  }
+  if (ctx.includes('banana')) {
+    return {
+      items: [
+        { foodItem: 'Ripe Banana', name: 'Ripe Banana', estimatedWeightGrams: 118, calories: 105, kcal: 105, protein: 1.3, carbs: 27, fat: 0.4, macros: { protein: 1.3, carbs: 27, fat: 0.4 }, confidenceScore: 0.9, confidence: 0.9 },
+      ],
+    };
+  }
+  if (ctx.includes('sandwich')) {
+    return {
+      items: [
+        { foodItem: 'Turkey & Cheese Sandwich', name: 'Turkey & Cheese Sandwich', estimatedWeightGrams: 210, calories: 380, kcal: 380, protein: 24, carbs: 36, fat: 14, macros: { protein: 24, carbs: 36, fat: 14 }, confidenceScore: 0.88, confidence: 0.88 },
+      ],
+    };
+  }
+  if (ctx.includes('pizza')) {
+    return {
+      items: [
+        { foodItem: 'Pepperoni Pizza Slice', name: 'Pepperoni Pizza Slice', estimatedWeightGrams: 110, calories: 290, kcal: 290, protein: 12, carbs: 32, fat: 12, macros: { protein: 12, carbs: 32, fat: 12 }, confidenceScore: 0.88, confidence: 0.88 },
+      ],
+    };
+  }
+  if (ctx.includes('hot dog')) {
+    return {
+      items: [
+        { foodItem: 'Hot Dog on Bun', name: 'Hot Dog on Bun', estimatedWeightGrams: 140, calories: 290, kcal: 290, protein: 10, carbs: 24, fat: 17, macros: { protein: 10, carbs: 24, fat: 17 }, confidenceScore: 0.85, confidence: 0.85 },
+      ],
+    };
+  }
+  if (ctx.includes('salad') || ctx.includes('broccoli') || ctx.includes('carrot')) {
+    return {
+      items: [
+        { foodItem: 'Garden Vegetable Salad', name: 'Garden Vegetable Salad', estimatedWeightGrams: 160, calories: 120, kcal: 120, protein: 4, carbs: 14, fat: 6, macros: { protein: 4, carbs: 14, fat: 6 }, confidenceScore: 0.85, confidence: 0.85 },
+      ],
+    };
+  }
+  if (ctx.includes('chicken')) {
+    return {
+      items: [
+        { foodItem: 'Grilled Chicken Breast', name: 'Grilled Chicken Breast', estimatedWeightGrams: 180, calories: 280, kcal: 280, protein: 52, carbs: 0, fat: 6, macros: { protein: 52, carbs: 0, fat: 6 }, confidenceScore: 0.88, confidence: 0.88 },
+      ],
+    };
+  }
+
+  // 3. Balanced meal fallback (not locked to chicken)
+  return {
+    items: [
+      { foodItem: 'Mediterranean Meal Bowl', name: 'Mediterranean Meal Bowl', estimatedWeightGrams: 320, calories: 420, kcal: 420, protein: 26, carbs: 46, fat: 12, macros: { protein: 26, carbs: 46, fat: 12 }, confidenceScore: 0.75, confidence: 0.75 },
+    ],
+  };
+}
 
 app.post('/api/stepfun/analyze', async (c) => {
   const parsed = AnalyzeBody.safeParse(await c.req.json().catch(() => null));
@@ -108,7 +219,7 @@ app.post('/api/stepfun/analyze', async (c) => {
 
   if (!cfg.stepfun.key) {
     return mode === 'food'
-      ? c.json({ mode, source: 'mock', ...MOCK_FOOD })
+      ? c.json({ mode, source: 'mock', ...generateMockFoodResponse(context) })
       : c.json({ mode, source: 'mock', formNotes: 'Nice tempo! Keep your core braced and control the way down.' });
   }
 

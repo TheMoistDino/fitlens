@@ -308,7 +308,97 @@ export class StepFunFoodAdapter {
    * Resilient offline fallback mock when API keys are absent or offline.
    */
   private createFallbackResponse(context?: string): StepFunFoodAnalysisResponse {
-    const isSalad = context?.toLowerCase().includes('broccoli') || context?.toLowerCase().includes('carrot');
+    const ctx = (context ?? '').toLowerCase();
+
+    // 1. Liquids / Beverages in containers
+    if (
+      ctx.includes('cup') ||
+      ctx.includes('bottle') ||
+      ctx.includes('wine glass') ||
+      ctx.includes('drink') ||
+      ctx.includes('beverage')
+    ) {
+      return {
+        items: [
+          {
+            foodItem: 'Beverage (Coffee / Tea / Cola)',
+            estimatedWeightGrams: 240,
+            calories: 2,
+            macros: { protein: 0.2, carbs: 0.3, fat: 0 },
+            confidenceScore: 0.5,
+          },
+        ],
+        totalCalories: 2,
+        source: 'mock',
+      };
+    }
+
+    // 2. Common detected foods
+    if (ctx.includes('apple')) {
+      return {
+        items: [
+          {
+            foodItem: 'Fresh Apple',
+            estimatedWeightGrams: 182,
+            calories: 95,
+            macros: { protein: 0.5, carbs: 25, fat: 0.3 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 95,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('banana')) {
+      return {
+        items: [
+          {
+            foodItem: 'Ripe Banana',
+            estimatedWeightGrams: 118,
+            calories: 105,
+            macros: { protein: 1.3, carbs: 27, fat: 0.4 },
+            confidenceScore: 0.85,
+          },
+        ],
+        totalCalories: 105,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('pizza')) {
+      return {
+        items: [
+          {
+            foodItem: 'Pizza Slice',
+            estimatedWeightGrams: 110,
+            calories: 290,
+            macros: { protein: 12, carbs: 32, fat: 12 },
+            confidenceScore: 0.8,
+          },
+        ],
+        totalCalories: 290,
+        source: 'mock',
+      };
+    }
+
+    if (ctx.includes('sandwich')) {
+      return {
+        items: [
+          {
+            foodItem: 'Sandwich',
+            estimatedWeightGrams: 200,
+            calories: 360,
+            macros: { protein: 20, carbs: 36, fat: 14 },
+            confidenceScore: 0.8,
+          },
+        ],
+        totalCalories: 360,
+        source: 'mock',
+      };
+    }
+
+    const isSalad = ctx.includes('broccoli') || ctx.includes('carrot') || ctx.includes('salad');
 
     const items: StepFunFoodItem[] = isSalad
       ? [

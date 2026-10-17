@@ -5,6 +5,13 @@ import { foodScannerBus } from '../services/FoodScannerBus';
 import { persistMealLog } from '../services/foodStorage';
 import type { DetectedFoodItem, MealLoggedPayload, StepFunFoodItem } from '../services/types';
 
+import {
+  isLiquidContainer,
+  getDarkBrownBeverages,
+  getBeveragePresets,
+  type BeveragePreset,
+} from '../services/beverageProfiles';
+
 /**
  * Fallback macro heuristics for common COCO food classes when cloud API has not yet responded.
  * Ensures the WebAR UI remains fully functional even in offline / degraded connectivity.
@@ -21,8 +28,8 @@ const FALLBACK_MACRO_ESTIMATES: Record<string, { kcal: number; protein: number; 
   donut: { kcal: 250, protein: 3, carbs: 31, fat: 13, weight: 60 },
   cake: { kcal: 350, protein: 4, carbs: 50, fat: 15, weight: 100 },
   bowl: { kcal: 380, protein: 22, carbs: 45, fat: 12, weight: 350 },
-  cup: { kcal: 120, protein: 4, carbs: 18, fat: 3, weight: 240 },
-  bottle: { kcal: 140, protein: 0, carbs: 35, fat: 0, weight: 355 },
+  cup: { kcal: 2, protein: 0.2, carbs: 0.3, fat: 0, weight: 240 },
+  bottle: { kcal: 0, protein: 0, carbs: 0, fat: 0, weight: 355 },
   'wine glass': { kcal: 125, protein: 0.1, carbs: 3.8, fat: 0, weight: 150 },
 };
 
@@ -79,11 +86,51 @@ export function FoodTooltipCard({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
   const [isLogging, setIsLogging] = useState(false);
+  const [selectedBeverage, setSelectedBeverage] = useState<BeveragePreset | null>(null);
+  const [showAllBeverages, setShowAllBeverages] = useState(false);
   const uniqueId = useId();
 
-  // Resolve nutrition metrics (cloud StepFun result takes priority, falling back to local heuristics)
+  const isLiquid = useMemo(() => {
+    return (
+      isLiquidContainer(item.label) ||
+      isLiquidContainer(macroItem?.name) ||
+      (macroItem?.name?.toLowerCase().includes('beverage') ?? false) ||
+      (detailedItem?.foodItem?.toLowerCase().includes('beverage') ?? false)
+    );
+  }, [item.label, macroItem, detailedItem]);
+
+  // Resolve nutrition metrics (user selected beverage takes priority, then StepFun result, then local heuristics)
   const nutrition = useMemo(() => {
+    if (selectedBeverage) {
+      return {
+        name: selectedBeverage.name,
+        calories: selectedBeverage.calories,
+        protein: selectedBeverage.protein,
+        carbs: selectedBeverage.carbs,
+        fat: selectedBeverage.fat,
+        weight: selectedBeverage.servingSizeGrams,
+        confidence: 1.0,
+        isCloudVerified: true,
+      };
+    }
+
     if (macroItem) {
+      const isGenericPlaceholder =
+        macroItem.name.toLowerCase().includes('beverage') || isLiquidContainer(macroItem.name);
+
+      if (isGenericPlaceholder) {
+        return {
+          name: 'Beverage (Select Drink)',
+          calories: 2,
+          protein: 0.2,
+          carbs: 0.3,
+          fat: 0,
+          weight: 240,
+          confidence: 0.5,
+          isCloudVerified: false,
+        };
+      }
+
       return {
         name: macroItem.name || item.label,
         calories: Math.round(macroItem.kcal),
@@ -93,6 +140,19 @@ export function FoodTooltipCard({
         weight: detailedItem?.estimatedWeightGrams ?? 150,
         confidence: detailedItem?.confidenceScore ?? item.confidence,
         isCloudVerified: true,
+      };
+    }
+
+    if (isLiquid) {
+      return {
+        name: item.label.toLowerCase() === 'cup' ? 'Beverage in Cup' : item.label.toLowerCase() === 'bottle' ? 'Drink in Bottle' : 'Beverage',
+        calories: 2,
+        protein: 0.2,
+        carbs: 0.3,
+        fat: 0,
+        weight: 240,
+        confidence: 0.45,
+        isCloudVerified: false,
       };
     }
 
@@ -114,7 +174,7 @@ export function FoodTooltipCard({
       confidence: item.confidence,
       isCloudVerified: false,
     };
-  }, [item, macroItem, detailedItem]);
+  }, [item, macroItem, detailedItem, selectedBeverage, isLiquid]);
 
   // Macro distribution calculations for visual gauges
   const macroBreakdown = useMemo(() => {
@@ -198,7 +258,15 @@ export function FoodTooltipCard({
               <span className="truncate text-base font-semibold tracking-tight text-white">
                 {nutrition.name}
               </span>
-              {nutrition.isCloudVerified ? (
+              {selectedBeverage ? (
+                <span className="inline-flex items-center rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] font-medium text-cyan-300 border border-cyan-500/30">
+                  Confirmed Drink
+                </span>
+              ) : isLiquid ? (
+                <span className="inline-flex items-center rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-medium text-amber-300 border border-amber-500/30 animate-pulse">
+                  Specify Drink
+                </span>
+              ) : nutrition.isCloudVerified ? (
                 <span className="inline-flex items-center rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/30">
                   StepFun AI
                 </span>
@@ -225,6 +293,70 @@ export function FoodTooltipCard({
             </div>
           </div>
         </div>
+
+        {/* Liquid Disambiguation Panel (for cups, bottles, beverages) */}
+        {isLiquid && (
+          <div className="mt-2.5 rounded-xl border border-cyan-500/30 bg-cyan-950/50 p-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-cyan-200 flex items-center gap-1.5">
+                <span>🥤</span>
+                <span>What is in this cup / bottle?</span>
+              </span>
+              {selectedBeverage && (
+                <span className="text-[10px] text-emerald-400 font-medium">✓ Selected</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] leading-tight text-neutral-300">
+              Coffee, tea & cola look visually similar. Tap to specify:
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-1.5">
+              {(showAllBeverages ? getBeveragePresets() : getDarkBrownBeverages()).map((bev) => {
+                const isCurrent = selectedBeverage?.id === bev.id;
+                return (
+                  <button
+                    key={bev.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedBeverage(bev);
+                      toast(`Selected ${bev.name} (${bev.calories} kcal)`, 'info');
+                    }}
+                    className={`flex items-center justify-between rounded-lg px-2 py-1.5 text-xs transition-all ${
+                      isCurrent
+                        ? 'bg-cyan-500 text-black font-semibold ring-1 ring-cyan-300 shadow-sm'
+                        : 'bg-white/10 text-neutral-200 hover:bg-white/20 hover:text-white'
+                    }`}
+                  >
+                    <span className="truncate flex items-center gap-1">
+                      <span>{bev.icon}</span>
+                      <span>{bev.shortName}</span>
+                    </span>
+                    <span className={`text-[10px] tabular-nums ${isCurrent ? 'text-black font-bold' : 'text-neutral-400'}`}>
+                      {bev.calories} kcal
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px]">
+              <button
+                type="button"
+                onClick={() => setShowAllBeverages((prev) => !prev)}
+                className="text-cyan-400 hover:text-cyan-300 underline underline-offset-2"
+              >
+                {showAllBeverages ? 'Show dark-brown only' : '+ More drink options'}
+              </button>
+              {selectedBeverage && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedBeverage(null)}
+                  className="text-neutral-400 hover:text-neutral-200 underline"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Quick Action Buttons */}
         <div className="mt-3 flex items-center gap-2">

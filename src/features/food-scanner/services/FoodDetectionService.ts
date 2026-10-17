@@ -24,7 +24,6 @@ const FOOD_AND_CONTAINER_CLASSES = new Set<string>([
   'cup',
   'bottle',
   'wine glass',
-  'dining table',
 ]);
 
 export interface ViewportDimensions {

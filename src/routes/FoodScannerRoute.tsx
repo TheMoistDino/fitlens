@@ -10,6 +10,8 @@ import {
   FrameSampler,
   StepFunFoodAdapter,
   foodScannerBus,
+  isLiquidContainer,
+  BEVERAGE_PRESETS,
   type BoundingBox2D,
   type DetectedFoodItem,
   type MealLoggedPayload,
@@ -831,6 +833,14 @@ export default function FoodScannerRoute() {
                         {detailed.estimatedWeightGrams}g · {Math.round(detailed.confidenceScore * 100)}% conf
                       </span>
                     )}
+                    {(isLiquidContainer(item.name) ||
+                      item.name.toLowerCase().includes('cup') ||
+                      item.name.toLowerCase().includes('bottle') ||
+                      item.name.toLowerCase().includes('beverage')) && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-cyan-500/20 px-1.5 py-0.5 text-[10px] text-cyan-300 border border-cyan-500/30">
+                        Drink / Liquid
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="tabular-nums text-neutral-300">{Math.round(item.kcal)} kcal</span>
@@ -898,6 +908,52 @@ export default function FoodScannerRoute() {
             </p>
 
             <div className="mt-4 space-y-3 text-sm">
+              {/* Quick Beverage Presets for liquid containers and drinks */}
+              {(isLiquidContainer(manualAdjustModal.item.label) ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('cup') ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('bottle') ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('drink') ||
+                manualAdjustModal.nutrition.name.toLowerCase().includes('beverage')) && (
+                <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/40 p-2.5">
+                  <span className="block text-xs font-semibold text-cyan-200">
+                    🥤 Quick Drink Presets (Coffee vs. Tea vs. Cola)
+                  </span>
+                  <p className="mt-0.5 text-[11px] text-neutral-300">
+                    Dark-brown drinks have small differences. Tap to auto-populate:
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {BEVERAGE_PRESETS.map((bev) => (
+                      <button
+                        key={bev.id}
+                        type="button"
+                        onClick={() => {
+                          setManualAdjustModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  nutrition: {
+                                    name: bev.name,
+                                    calories: bev.calories,
+                                    protein: bev.protein,
+                                    carbs: bev.carbs,
+                                    fat: bev.fat,
+                                    weight: bev.servingSizeGrams,
+                                    confidence: 1.0,
+                                    isCloudVerified: true,
+                                  },
+                                }
+                              : null,
+                          );
+                        }}
+                        className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-neutral-200 hover:bg-white/15 hover:text-white transition"
+                      >
+                        {bev.icon} {bev.shortName} ({bev.calories} kcal)
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-neutral-300">Food Name</label>
                 <input

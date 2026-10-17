@@ -5,3 +5,4 @@ export * from './FrameSampler';
 export * from './StepFunFoodAdapter';
 export * from './foodStorage';
 export * from './imageProcessor';
+export * from './beverageProfiles';
