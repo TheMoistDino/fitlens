@@ -24,6 +24,20 @@ export interface FoodOverlayCanvasProps {
   onAnalyze?: () => void;
   /** Callback fired when a meal is logged */
   onMealLogged?: (meal: MealLoggedPayload) => void;
+  /** Callback fired when user triggers manual macro adjustment */
+  onAdjustMacros?: (
+    item: DetectedFoodItem,
+    currentNutrition: {
+      name: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      weight: number;
+      confidence: number;
+      isCloudVerified: boolean;
+    },
+  ) => void;
   /** Optional additional 3D scene elements */
   children?: ReactNode;
 }
@@ -48,6 +62,7 @@ export function FoodSpatialScene({
   analyzing = false,
   onAnalyze,
   onMealLogged,
+  onAdjustMacros,
   children,
 }: FoodOverlayCanvasProps) {
   const size = useThree((s) => s.size);
@@ -232,6 +247,7 @@ export function FoodSpatialScene({
                   analyzing={analyzing}
                   onAnalyze={onAnalyze}
                   onLogged={onMealLogged}
+                  onAdjust={onAdjustMacros}
                 />
               </Html>
             )}

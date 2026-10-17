@@ -39,6 +39,20 @@ export interface FoodTooltipCardProps {
   onAnalyze?: () => void;
   /** Callback fired after meal is committed to storage and event bus */
   onLogged?: (meal: MealLoggedPayload) => void;
+  /** Manual fallback override callback when confidence < 0.60 or user requests adjustment */
+  onAdjust?: (
+    item: DetectedFoodItem,
+    currentNutrition: {
+      name: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      weight: number;
+      confidence: number;
+      isCloudVerified: boolean;
+    },
+  ) => void;
 }
 
 /**
@@ -59,6 +73,7 @@ export function FoodTooltipCard({
   analyzing = false,
   onAnalyze,
   onLogged,
+  onAdjust,
 }: FoodTooltipCardProps) {
   const toast = useToast();
   const [isExpanded, setIsExpanded] = useState(false);
@@ -271,6 +286,25 @@ export function FoodTooltipCard({
               className="font-medium text-cyan-400 underline underline-offset-2 hover:text-cyan-300 disabled:opacity-50"
             >
               {analyzing ? 'Scanning…' : 'Deep Scan'}
+            </button>
+          </div>
+        )}
+
+        {/* Manual Fallback Input: If cloud estimation fails or confidence < 0.60 */}
+        {(!nutrition.isCloudVerified || nutrition.confidence < 0.60) && (
+          <div className="mt-2 flex items-center justify-between rounded-lg bg-neutral-800/80 border border-neutral-700/60 px-2 py-1.5 text-[11px] text-neutral-300">
+            <span className="text-amber-400 font-medium flex items-center gap-1">
+              <svg className="h-3 w-3 text-amber-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              {nutrition.confidence < 0.60 ? 'Low confidence' : 'Offline heuristic'}
+            </span>
+            <button
+              type="button"
+              onClick={() => onAdjust?.(item, nutrition)}
+              className="font-medium text-cyan-400 underline underline-offset-2 hover:text-cyan-300 transition-colors focus:outline-none"
+            >
+              Adjust Calories/Macros
             </button>
           </div>
         )}

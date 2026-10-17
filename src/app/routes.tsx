@@ -11,7 +11,7 @@ export interface AppRoute {
  * camera page is opened, keeping the dashboard and first paint light.
  */
 export const routes: AppRoute[] = [
-  { path: '/scan', label: 'Food Scanner', Component: lazy(() => import('@/features/food-scanner/FoodScannerPage')) },
+  { path: '/scan', label: 'Food Scanner', Component: lazy(() => import('@/routes/FoodScannerRoute')) },
   { path: '/workout', label: 'Workout Tracker', Component: lazy(() => import('@/features/workout/WorkoutPage')) },
   { path: '/dashboard', label: 'Dashboard', Component: lazy(() => import('@/features/dashboard/DashboardPage')) },
 ];
