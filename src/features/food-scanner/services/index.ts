@@ -3,3 +3,4 @@ export * from './FoodScannerBus';
 export * from './FoodDetectionService';
 export * from './FrameSampler';
 export * from './StepFunFoodAdapter';
+export * from './foodStorage';

@@ -81,6 +81,21 @@ export const StepFunFoodAnalysisResponseSchema = z.object({
 
 export type StepFunFoodAnalysisResponse = z.infer<typeof StepFunFoodAnalysisResponseSchema>;
 
+export interface MealLoggedPayload {
+  id: string;
+  name: string;
+  calories: number;
+  macros: {
+    protein: number;
+    carbs: number;
+    fat: number;
+  };
+  weightGrams?: number;
+  confidence?: number;
+  timestamp: number;
+  source: 'stepfun' | 'mock' | 'manual';
+}
+
 export type FoodScannerStateEvents = {
   FOOD_DETECTED: {
     items: DetectedFoodItem[];
@@ -97,5 +112,6 @@ export type FoodScannerStateEvents = {
     code: 'TIMEOUT' | 'NETWORK_ERROR' | 'INVALID_RESPONSE' | 'NO_FOOD_DETECTED' | 'ABORTED';
     timestamp: number;
   };
+  MEAL_LOGGED: MealLoggedPayload;
   [key: string]: unknown;
 };

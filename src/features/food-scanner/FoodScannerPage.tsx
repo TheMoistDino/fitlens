@@ -1,8 +1,7 @@
 import { useCameraStream } from '@/services/camera/useCameraStream';
-import { ArCanvas } from '@/ar/ArCanvas';
-import { MacroLabel3D } from '@/ar/MacroLabel3D';
 import { CameraViewport } from '@/ui/CameraViewport';
 import { Badge, Button, Card, StatPill } from '@/ui/primitives';
+import { FoodOverlayCanvas } from './components';
 import { useFoodScan } from './useFoodScan';
 
 export default function FoodScannerPage() {
@@ -32,9 +31,14 @@ export default function FoodScannerPage() {
       </header>
 
       <CameraViewport videoRef={camera.videoRef} status={camera.status} error={camera.error} mirror={mirror} onRetry={() => void camera.start()}>
-        <ArCanvas>
-          <MacroLabel3D boxesRef={scan.boxesRef} macros={scan.macros} />
-        </ArCanvas>
+        <FoodOverlayCanvas
+          boxesRef={scan.boxesRef}
+          macros={scan.macros}
+          detailedItems={scan.detailedItems}
+          mirror={mirror}
+          analyzing={scan.analyzing}
+          onAnalyze={() => void scan.analyze()}
+        />
       </CameraViewport>
 
       <div className="flex flex-wrap gap-2">

@@ -32,6 +32,19 @@ class FoodScannerBus extends EventBus<FoodScannerStateEvents> {
       },
       { mode: 'sync', owner: 'food-scanner:bridge' },
     );
+
+    // Bridge MEAL_LOGGED to global sponsor bus
+    this.on(
+      'MEAL_LOGGED',
+      (payload) => {
+        try {
+          (sponsorBus as unknown as EventBus<Record<string, unknown>>).emit('MEAL_LOGGED', payload);
+        } catch (err) {
+          console.error('[FoodScannerBus] Failed to dispatch MEAL_LOGGED to sponsor bus', err);
+        }
+      },
+      { mode: 'sync', owner: 'food-scanner:bridge' },
+    );
   }
 
   emitFoodDetected(payload: FoodScannerStateEvents['FOOD_DETECTED']): void {
@@ -44,6 +57,10 @@ class FoodScannerBus extends EventBus<FoodScannerStateEvents> {
 
   emitNutritionFailed(payload: FoodScannerStateEvents['NUTRITION_FAILED']): void {
     this.emit('NUTRITION_FAILED', payload);
+  }
+
+  emitMealLogged(payload: FoodScannerStateEvents['MEAL_LOGGED']): void {
+    this.emit('MEAL_LOGGED', payload);
   }
 }
 
