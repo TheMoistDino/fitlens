@@ -66,6 +66,8 @@ export const HIDDEN_FOOD_KEYWORDS = [
   'calzone',
   'stromboli',
   'pot pie',
+  'pot-pie',
+  'potpie',
   'dumpling',
   'dumplings',
   'gyoza',
@@ -105,15 +107,12 @@ export function isFoodHidingContents(label: string | undefined | null): boolean 
   ];
 
   if (nonCompositeExclusions.some((ex) => norm === ex || norm.startsWith(`${ex} `) || norm.endsWith(` ${ex}`))) {
-    const isCompositeVariant =
-      norm.includes('sandwich') ||
-      norm.includes('burrito') ||
-      norm.includes('wrap') ||
-      norm.includes('dumpling') ||
-      norm.includes('burger') ||
-      norm.includes('pie') ||
-      norm.includes('taco') ||
-      norm.includes('calzone');
+    const isCompositeVariant = HIDDEN_FOOD_KEYWORDS.some((kw) => {
+      if (kw.length <= 4) {
+        return new RegExp(`\\b${kw}s?\\b`, 'i').test(norm);
+      }
+      return norm.includes(kw);
+    });
     if (!isCompositeVariant) return false;
   }
 
@@ -372,7 +371,12 @@ export function getCompositeBaseline(label: string | undefined | null): Composit
   if (norm.includes('quesadilla')) {
     return COMPOSITE_BASELINES.quesadilla;
   }
-  if (norm.includes('sandwich') || norm.includes('sub') || norm.includes('panini') || norm.includes('hoagie')) {
+  if (
+    norm.includes('sandwich') ||
+    /\bsubs?\b/i.test(norm) ||
+    norm.includes('panini') ||
+    norm.includes('hoagie')
+  ) {
     return COMPOSITE_BASELINES.sandwich;
   }
 
@@ -599,6 +603,10 @@ export function searchFillingTags(query: string): FillingTag[] {
  */
 export function calculateCompositeNutrition(input: CompositeCalculationInput): CompositeNutritionResult {
   const { baseLabel, selectedTagIds, notes, portionMultiplier = 1 } = input;
+  const safePortionMultiplier =
+    typeof portionMultiplier === 'number' && Number.isFinite(portionMultiplier) && portionMultiplier >= 0
+      ? portionMultiplier
+      : 1;
   const baseline = getCompositeBaseline(baseLabel) ?? DEFAULT_BURRITO_BASELINE;
 
   const hasNotes = Boolean(notes && notes.trim());
@@ -606,11 +614,11 @@ export function calculateCompositeNutrition(input: CompositeCalculationInput): C
   // Return standard baseline average if no customizations
   if (selectedTagIds.length === 0 && !hasNotes) {
     return {
-      calories: Math.round(baseline.calories * portionMultiplier),
-      protein: Math.round(baseline.protein * portionMultiplier),
-      carbs: Math.round(baseline.carbs * portionMultiplier),
-      fat: Math.round((baseline.fat * portionMultiplier + Number.EPSILON) * 10) / 10,
-      weightGrams: Math.round(baseline.servingSizeGrams * portionMultiplier),
+      calories: Math.round(baseline.calories * safePortionMultiplier),
+      protein: Math.round(baseline.protein * safePortionMultiplier),
+      carbs: Math.round(baseline.carbs * safePortionMultiplier),
+      fat: Math.round((baseline.fat * safePortionMultiplier + Number.EPSILON) * 10) / 10,
+      weightGrams: Math.round(baseline.servingSizeGrams * safePortionMultiplier),
       isBaselineAverage: true,
       baselineNote: baseline.baselineNote,
       selectedTags: [],
@@ -726,11 +734,11 @@ export function calculateCompositeNutrition(input: CompositeCalculationInput): C
   w = Math.max(0, w);
 
   return {
-    calories: Math.round(cal * portionMultiplier),
-    protein: Math.round(p * portionMultiplier),
-    carbs: Math.round(c * portionMultiplier),
-    fat: Math.round((f * portionMultiplier + Number.EPSILON) * 10) / 10,
-    weightGrams: Math.round(w * portionMultiplier),
+    calories: Math.round(cal * safePortionMultiplier),
+    protein: Math.round(p * safePortionMultiplier),
+    carbs: Math.round(c * safePortionMultiplier),
+    fat: Math.round((f * safePortionMultiplier + Number.EPSILON) * 10) / 10,
+    weightGrams: Math.round(w * safePortionMultiplier),
     isBaselineAverage: false,
     selectedTags: matchedTags,
     notesAdjustmentKcal,
@@ -766,7 +774,7 @@ export function formatMinimalReticleLabel(item: {
       'can',
     ].includes(normLabel.toLowerCase());
 
-    if (item.calories !== undefined && item.calories > 0 && !isGenericContainer) {
+    if (item.calories !== undefined && item.calories >= 0 && !isGenericContainer) {
       return `${capitalized} · ~${item.calories} kcal`;
     }
     return 'Drink · ~0-140 kcal';

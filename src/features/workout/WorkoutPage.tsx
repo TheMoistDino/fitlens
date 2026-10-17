@@ -1,39 +1,88 @@
-import { useCallback, useState } from 'react';
-import { useCameraStream } from '@/services/camera/useCameraStream';
-import { ArCanvas } from '@/ar/ArCanvas';
-import { SkeletonOverlay } from '@/ar/SkeletonOverlay';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCameraStream, type FrameCallback } from '@/services/camera/useCameraStream';
 import { CameraViewport } from '@/ui/CameraViewport';
 import { Badge, Button, Card } from '@/ui/primitives';
 import { useBusEvent } from '@/app/hooks';
-import type { ExerciseKind, SponsorEventMap } from '@/core/events/events';
-import { useWorkoutSession } from './useWorkoutSession';
+import type { SponsorEventMap } from '@/core/events/events';
+import { PoseLandmarkerService } from '@/ml/pose/PoseLandmarkerService';
+import { BODYWEIGHT_LIST, BODYWEIGHT_PROFILES } from '@/features/fitness/exercises/exerciseProfiles';
+import { useFitnessTracker } from '@/features/fitness/engine/useFitnessTracker';
+import { FitnessHUD } from '@/features/fitness/components/FitnessHUD';
+import { SetupHint } from '@/features/fitness/components/SetupHint';
+import { RotateHint, useIsPortrait } from '@/features/fitness/components/RotateHint';
+import { SetSummaryCard } from '@/features/fitness/components/SetSummaryCard';
+import type { BodyweightExercise, SetSummary } from '@/features/fitness/types';
 import { HudPanel } from './components/HudPanel';
 
-const EXERCISES: { id: ExerciseKind; label: string }[] = [
-  { id: 'squat', label: 'Squat' },
-  { id: 'curl', label: 'Bicep curl' },
-  { id: 'pushup', label: 'Push-up' },
-];
+type Stage = 'setup' | 'active' | 'summary';
 
+/**
+ * Bodyweight sets (squat, push-up) on the same 3D rep engine + HUD as Gym Coach — no machine or
+ * weight scan, just pick, position the phone, and go.
+ */
 export default function WorkoutPage() {
-  const [facing] = useState<'user' | 'environment'>('user');
-  const mirror = facing === 'user';
-  const session = useWorkoutSession(mirror);
-  const camera = useCameraStream({ facingMode: facing, onFrame: session.onFrame });
+  const [exercise, setExercise] = useState<BodyweightExercise>('squat');
+  const [stage, setStage] = useState<Stage>('setup');
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [summary, setSummary] = useState<SetSummary | null>(null);
   const [coach, setCoach] = useState<SponsorEventMap['coach:feedback'] | null>(null);
+  const profile = BODYWEIGHT_PROFILES[exercise];
+  const isPortrait = useIsPortrait();
+  const needsRotate = profile.orientation === 'landscape' && isPortrait && stage !== 'summary';
+
+  const poseServiceRef = useRef<PoseLandmarkerService | null>(null);
+  const [poseStatus, setPoseStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  useEffect(() => {
+    const svc = new PoseLandmarkerService();
+    poseServiceRef.current = svc;
+    svc.init().then(
+      () => setPoseStatus('ready'),
+      () => setPoseStatus('error'),
+    );
+    return () => svc.dispose();
+  }, []);
+
+  const tracker = useFitnessTracker(poseServiceRef);
+  const activeRef = useRef(false);
+  activeRef.current = stage === 'active';
+  const trackRef = useRef(tracker.processFrame);
+  trackRef.current = tracker.processFrame;
+  const onFrame = useCallback<FrameCallback>((video, { now }) => {
+    if (activeRef.current) trackRef.current(video, now);
+  }, []);
+
+  const camera = useCameraStream({ facingMode: 'user', onFrame });
+  const mirror = camera.facingMode === 'user';
 
   useBusEvent('coach:feedback', useCallback((fb: SponsorEventMap['coach:feedback']) => setCoach(fb), []));
+
+  const start = () => {
+    const t = performance.now();
+    tracker.start(profile, t);
+    setStartedAt(t);
+    setCoach(null);
+    setStage('active');
+  };
+
+  const end = useCallback(() => {
+    setSummary(tracker.finish(null, performance.now()));
+    setStartedAt(null);
+    setStage('summary');
+  }, [tracker]);
+
+  // Leaving mid-set still records it.
+  const endRef = useRef(end);
+  endRef.current = end;
+  useEffect(() => () => void (activeRef.current && endRef.current()), []);
 
   return (
     <div className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-xl font-bold">Pose Form Coach</h1>
-          <p className="text-sm text-neutral-400">On-device pose tracking · cloud coaching every few seconds</p>
+          <h1 className="text-xl font-bold">Bodyweight</h1>
+          <p className="text-sm text-neutral-400">Live rep counting and form cues for squats and push-ups</p>
         </div>
-        <Badge tone={session.modelStatus === 'ready' ? 'good' : session.modelStatus === 'error' ? 'bad' : 'warn'}>
-          Pose model: {session.modelStatus}
-        </Badge>
+        <Badge tone={poseStatus === 'ready' ? 'good' : poseStatus === 'error' ? 'bad' : 'warn'}>Pose: {poseStatus}</Badge>
       </header>
 
       <CameraViewport
@@ -44,31 +93,56 @@ export default function WorkoutPage() {
         onRetry={() => void camera.start()}
         className="relative mx-auto w-full h-[65vh] md:h-[calc(100dvh-16rem)] min-h-[380px] overflow-hidden rounded-2xl md:rounded-3xl bg-black shadow-2xl"
       >
-        <ArCanvas>
-          <SkeletonOverlay landmarksRef={session.landmarksRef} alertRef={session.alertRef} mirror={mirror} />
-        </ArCanvas>
+        {needsRotate && <RotateHint />}
+        {stage === 'active' && (
+          <FitnessHUD
+            poseRef={tracker.poseRef}
+            formRef={tracker.formRef}
+            mirror={mirror}
+            repCount={tracker.ui.repCount}
+            phase={tracker.ui.phase}
+            cue={tracker.ui.cue}
+            load={null}
+            startedAt={startedAt}
+            machineName={profile.name}
+          />
+        )}
       </CameraViewport>
 
-      {session.modelStatus === 'error' && (
-        <p className="text-sm text-amber-300">Tracking unavailable on this device — the camera still works, and you can log workouts manually.</p>
+      {stage === 'setup' && (
+        <Card title="Set up">
+          <div className="mb-3 flex flex-wrap gap-2">
+            {BODYWEIGHT_LIST.map((p) => (
+              <Button key={p.id} variant={exercise === p.id ? 'primary' : 'secondary'} onClick={() => setExercise(p.id)}>
+                {p.name}
+              </Button>
+            ))}
+          </div>
+          <SetupHint profile={profile} />
+          <div className="mt-4 flex items-center gap-3">
+            <Button onClick={start} disabled={poseStatus !== 'ready' || camera.status !== 'streaming'}>Start set</Button>
+            {poseStatus === 'error' && <span className="text-xs text-rose-300">Pose tracking unavailable on this device.</span>}
+          </div>
+        </Card>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        {EXERCISES.map((e) => (
-          <Button key={e.id} variant={session.exercise === e.id ? 'primary' : 'secondary'} disabled={session.active} onClick={() => session.setExercise(e.id)}>
-            {e.label}
-          </Button>
-        ))}
-        <div className="ml-auto">
-          {session.active ? (
-            <Button variant="danger" onClick={session.end}>End set</Button>
-          ) : (
-            <Button onClick={session.start} disabled={camera.status !== 'streaming'}>Start set</Button>
-          )}
+      {stage === 'active' && (
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm text-neutral-400">
+            {tracker.ui.partialReps > 0 ? `${tracker.ui.partialReps} partial rep(s) not counted` : profile.setupHint}
+          </span>
+          <Button variant="danger" onClick={end}>End set</Button>
         </div>
-      </div>
+      )}
 
-      <Card title="Live HUD">
+      {stage === 'summary' && (
+        <>
+          {summary && <SetSummaryCard summary={summary} />}
+          <Button onClick={() => setStage('setup')}>New set</Button>
+        </>
+      )}
+
+      <Card title="Live HUD (glasses mirror)">
         <HudPanel />
       </Card>
 
@@ -80,3 +154,4 @@ export default function WorkoutPage() {
     </div>
   );
 }
+

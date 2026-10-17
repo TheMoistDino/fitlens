@@ -48,7 +48,7 @@ function extractJson(text: string): unknown {
 
 // ---------------------------------------------------------------- StepFun
 const AnalyzeBody = z.object({
-  mode: z.enum(['food', 'pose']),
+  mode: z.enum(['food', 'pose', 'machine']),
   imageDataUrl: z.string().startsWith('data:image/').max(4_000_000),
   context: z.string().max(500).optional(),
 });
@@ -84,6 +84,12 @@ const FoodItems = z.object({
   items: z.array(FoodItemSchema).max(10),
 });
 const PoseNotes = z.object({ formNotes: z.string() });
+const MACHINES = ['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'bicep_curl', 'unknown'] as const;
+const MachineGuess = z.object({
+  machine: z.enum(MACHINES).catch('unknown'),
+  confidence: z.coerce.number().min(0).max(1).catch(0),
+  box: z.object({ x: z.coerce.number(), y: z.coerce.number(), w: z.coerce.number(), h: z.coerce.number() }).optional().catch(undefined),
+});
 
 const PROMPTS = {
   food: `You are a nutrition vision model. Identify each distinct food item or beverage in the photo and estimate its portion.
@@ -93,6 +99,11 @@ Reply ONLY with JSON: {"items":[{"foodItem":string,"name":string,"estimatedWeigh
 Grams for macros. Return {"items":[]} if no food or beverage is visible.`,
   pose: `You are a strength coach looking at one frame of a user exercising.
 Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cues (max 25 words). Be encouraging.`,
+  machine: `You identify gym equipment. Classify the main equipment in the photo as one of:
+lat_pulldown, chest_press, seated_row, leg_extension,
+bicep_curl (dumbbells, an EZ/curl bar, or a cable curl station), unknown.
+Reply ONLY with JSON: {"machine": string, "confidence": number 0-1, "box": {"x":number,"y":number,"w":number,"h":number}}
+where box is the machine's bounding box in normalised 0-1 image coordinates (x,y = top-left).`,
 };
 
 function generateMockFoodResponse(context?: string) {
@@ -365,9 +376,9 @@ app.post('/api/stepfun/analyze', async (c) => {
   const { mode, imageDataUrl, context } = parsed.data;
 
   if (!cfg.stepfun.key) {
-    return mode === 'food'
-      ? c.json({ mode, source: 'mock', ...generateMockFoodResponse(context) })
-      : c.json({ mode, source: 'mock', formNotes: 'Nice tempo! Keep your core braced and control the way down.' });
+    if (mode === 'food') return c.json({ mode, source: 'mock', ...generateMockFoodResponse(context) });
+    if (mode === 'machine') return c.json({ mode, source: 'mock', machine: 'lat_pulldown', confidence: 0.82, box: { x: 0.2, y: 0.12, w: 0.6, h: 0.76 } });
+    return c.json({ mode, source: 'mock', formNotes: 'Nice tempo! Keep your core braced and control the way down.' });
   }
 
   try {
@@ -397,6 +408,7 @@ app.post('/api/stepfun/analyze', async (c) => {
     const json = extractJson(data.choices?.[0]?.message?.content ?? '');
 
     if (mode === 'food') return c.json({ mode, source: 'stepfun', ...FoodItems.parse(json) });
+    if (mode === 'machine') return c.json({ mode, source: 'stepfun', ...MachineGuess.parse(json) });
     return c.json({ mode, source: 'stepfun', ...PoseNotes.parse(json) });
   } catch (err) {
     console.error('[stepfun]', err);

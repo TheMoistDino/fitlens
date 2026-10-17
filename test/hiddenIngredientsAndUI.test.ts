@@ -356,4 +356,92 @@ describe('Hidden Ingredients & Minimal AR Reticle Labels Suite', () => {
     assert.strictEqual(fallbackZeroAspect.width, 800);
     assert.strictEqual(fallbackZeroAspect.height, 600);
   });
+
+  it('should handle domain logic edge cases: composite exclusions bypass, pot pie variants, sub word boundaries, 0-calorie beverages, and portionMultiplier sanitization', () => {
+    // 1. isFoodHidingContents: exclusions bypass & pot-pie variants
+    assert.strictEqual(isFoodHidingContents('steak sub'), true, 'steak sub should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('steak quesadilla'), true, 'steak quesadilla should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('steak panini'), true, 'steak panini should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('steak empanada'), true, 'steak empanada should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('quesadilla with rice'), true, 'quesadilla with rice should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('pot-pie'), true, 'pot-pie (hyphenated) should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('chicken pot-pie'), true, 'chicken pot-pie should be recognized as composite');
+    assert.strictEqual(isFoodHidingContents('potpie'), true, 'potpie (unspaced) should be recognized as composite');
+    // Ensure non-composite exclusions still return false
+    assert.strictEqual(isFoodHidingContents('steak'), false, 'standalone steak must remain non-composite');
+    assert.strictEqual(isFoodHidingContents('steak with rice'), false, 'steak with rice must remain non-composite');
+
+    // 2. getCompositeBaseline: word-boundary matching on 'sub'
+    assert.strictEqual(getCompositeBaseline('sugar substitute'), undefined, 'sugar substitute must not match sub');
+    assert.strictEqual(getCompositeBaseline('subtle tea'), undefined, 'subtle tea must not match sub');
+    assert.strictEqual(getCompositeBaseline('submarine'), undefined, 'submarine must not match sub');
+    const steakSubBaseline = getCompositeBaseline('steak sub');
+    assert.ok(steakSubBaseline, 'steak sub should match sandwich baseline');
+    assert.strictEqual(steakSubBaseline.category, 'sandwich');
+    const potPieBaseline = getCompositeBaseline('pot-pie');
+    assert.ok(potPieBaseline, 'pot-pie should match pot pie baseline');
+    assert.strictEqual(potPieBaseline.calories, 620);
+
+    // 3. formatMinimalReticleLabel: zero-calorie specific beverages
+    const dietCoke = formatMinimalReticleLabel({ label: 'Diet Coke', calories: 0, isLiquid: true });
+    assert.strictEqual(dietCoke, 'Diet Coke · ~0 kcal', 'Diet Coke should show ~0 kcal');
+
+    const water = formatMinimalReticleLabel({ label: 'Water', calories: 0, isLiquid: true });
+    assert.strictEqual(water, 'Water · ~0 kcal', 'Water should show ~0 kcal');
+
+    const blackCoffee = formatMinimalReticleLabel({ label: 'Black Coffee', calories: 0, isLiquid: true });
+    assert.strictEqual(blackCoffee, 'Black Coffee · ~0 kcal', 'Black coffee should show ~0 kcal');
+
+    const genericCup = formatMinimalReticleLabel({ label: 'cup', calories: 0, isLiquid: true });
+    assert.strictEqual(genericCup, 'Drink · ~0-140 kcal', 'Generic cup container retains range');
+
+    const unresolvedPotPie = formatMinimalReticleLabel({ label: 'pot-pie' });
+    assert.strictEqual(unresolvedPotPie, 'Pot-pie · ~620 kcal (Avg)', 'pot-pie auto-formats baseline average');
+
+    // 4. calculateCompositeNutrition: portionMultiplier sanitization
+    // Negative multiplier should safely default to 1.0 (never produce negative calories)
+    const negBaseline = calculateCompositeNutrition({
+      baseLabel: 'burrito',
+      selectedTagIds: [],
+      portionMultiplier: -1,
+    });
+    assert.strictEqual(negBaseline.calories, 680, 'negative multiplier defaults to 1.0');
+    assert.strictEqual(negBaseline.protein, 28);
+    assert.ok(negBaseline.calories >= 0);
+
+    // NaN multiplier should safely default to 1.0
+    const nanBaseline = calculateCompositeNutrition({
+      baseLabel: 'burrito',
+      selectedTagIds: [],
+      portionMultiplier: NaN,
+    });
+    assert.strictEqual(nanBaseline.calories, 680, 'NaN multiplier defaults to 1.0');
+    assert.strictEqual(Number.isNaN(nanBaseline.calories), false);
+
+    // Infinity multiplier should safely default to 1.0
+    const infBaseline = calculateCompositeNutrition({
+      baseLabel: 'burrito',
+      selectedTagIds: [],
+      portionMultiplier: Infinity,
+    });
+    assert.strictEqual(infBaseline.calories, 680, 'Infinity multiplier defaults to 1.0');
+
+    // Customized fillings with negative multiplier should also sanitize safely
+    const customNeg = calculateCompositeNutrition({
+      baseLabel: 'burrito',
+      selectedTagIds: ['steak', 'cheese'],
+      portionMultiplier: -2,
+    });
+    assert.ok(customNeg.calories > 0, 'custom with negative multiplier defaults to 1.0');
+    assert.strictEqual(Number.isFinite(customNeg.calories), true);
+
+    // Valid zero multiplier returns 0
+    const zeroMultiplier = calculateCompositeNutrition({
+      baseLabel: 'burrito',
+      selectedTagIds: [],
+      portionMultiplier: 0,
+    });
+    assert.strictEqual(zeroMultiplier.calories, 0, 'zero multiplier correctly returns 0');
+    assert.strictEqual(zeroMultiplier.protein, 0);
+  });
 });

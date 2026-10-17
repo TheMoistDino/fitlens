@@ -1,0 +1,228 @@
+/**
+ * Fitness engine contracts: FSM states/events, per-frame payloads, rep + form metrics, set summary.
+ * Pure types only, so every engine file (and the tests) can depend on this without pulling in React.
+ */
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import type { AnyExercise, BodyweightExercise, GymExercise, Severity, WeightUnit } from '@/core/events/events';
+
+export type { BodyweightExercise, GymExercise, WeightUnit };
+/** Any exercise the rep engine can track. */
+export type TrackedExercise = AnyExercise;
+
+// ---------------------------------------------------------------- geometry
+
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** Normalised [0..1] rectangle in video space. */
+export interface NormRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// ---------------------------------------------------------------- frame payloads
+
+/** One processed pose frame. Lives in a mutable ref; never stored in React state. */
+export interface PoseFrame {
+  /** performance.now() timestamp of the source frame. */
+  t: number;
+  /** Image-space landmarks (drawing). */
+  image: NormalizedLandmark[];
+  /** Metric, hip-centred landmarks (3D angle math). Falls back to image landmarks when absent. */
+  world: Vec3[];
+  /** videoWidth / videoHeight — converts normalised image coords back to square pixels. */
+  aspect: number;
+}
+
+export interface WeightReading {
+  value: number;
+  unit: WeightUnit;
+  /** Tesseract confidence 0..100. */
+  confidence: number;
+}
+
+export interface OcrFrameResult {
+  t: number;
+  rawText: string;
+  reading: WeightReading | null;
+}
+
+// ---------------------------------------------------------------- exercise profiles
+
+export type JointName = 'elbow' | 'knee';
+export type BoneGroup = 'torso' | 'leftArm' | 'rightArm' | 'leftLeg' | 'rightLeg';
+export type BoneStatus = 'good' | 'warn' | 'bad';
+
+/** 2D side-view stick figure for the reference loop (SVG units, 100×100 box). */
+export interface StickPose {
+  head: [number, number];
+  shoulder: [number, number];
+  elbow: [number, number];
+  wrist: [number, number];
+  hip: [number, number];
+  knee: [number, number];
+  ankle: [number, number];
+}
+
+/** Where the phone should be relative to the user. */
+export type CameraView = 'front' | 'side';
+
+export interface FormChecks {
+  /** Flag trunk movement relative to the set's own baseline (momentum / swinging). */
+  torsoSwing: boolean;
+  /** Flag absolute forward lean beyond this many degrees from vertical (squat "chest up"). */
+  maxTorsoLeanDeg?: number;
+  /**
+   * Plank-line check (push-ups): hip distance from the shoulder→ankle line as a fraction of body
+   * length, relative to the user's own top position. `sag` = hips toward the floor, `pike` = hips up.
+   */
+  bodyLine?: { sag: number; pike: number };
+}
+
+export interface ExerciseProfile {
+  id: TrackedExercise;
+  name: string;
+  muscles: string;
+  /**
+   * Camera placement. 'side' = joint bends across the lens (accurate), and only the side nearest
+   * the camera is used, because the far side is occluded and mostly guessed by the model.
+   * 'front' = both sides visible, averaged, and checked for left/right asymmetry.
+   */
+  cameraView: CameraView;
+  /**
+   * How the primary joint angle is measured. 'world' = 3D world landmarks (default).
+   * 'forearmProjection' = depth-free 2D method for front-view curls (see forearmProjectionAngle).
+   */
+  angleMethod?: 'world' | 'forearmProjection';
+  /** Phone orientation that tracks this exercise best; the UI prompts when it doesn't match. */
+  orientation?: 'portrait' | 'landscape';
+  /** One-line setup instruction shown before and during the set. */
+  setupHint: string;
+  checks: FormChecks;
+  /** Joint whose angle drives rep counting. */
+  joint: JointName;
+  /** Angle (deg) at the start/rest position of a rep. */
+  startAngle: number;
+  /** Angle (deg) at the far end of the range of motion. */
+  endAngle: number;
+  /**
+   * Which phase moves *away* from the start position. Chest press starts extended and lowers first
+   * (ECCENTRIC); a lat pulldown starts extended and pulls first (CONCENTRIC).
+   */
+  firstPhase: 'ECCENTRIC' | 'CONCENTRIC';
+  /** Cue when a rep turns around before reaching the far end. */
+  shortAtEndCue: string;
+  /** Cue when a rep restarts before returning fully to the start. */
+  shortAtStartCue: string;
+  /** Textbook tempo in seconds (reference loop + "too fast" checks). */
+  tempo: { eccentric: number; pause: number; concentric: number };
+  reference: { start: StickPose; end: StickPose };
+  kcalPerRep: number;
+}
+
+// ---------------------------------------------------------------- rep + form metrics
+
+export type RepPhase = 'READY' | 'ECCENTRIC' | 'INFLECTION' | 'CONCENTRIC' | 'REP_COMPLETED';
+
+export interface RepRecord {
+  index: number;
+  startedAt: number;
+  endedAt: number;
+  eccentricMs: number;
+  concentricMs: number;
+  pauseMs: number;
+  /** Fraction of target range actually covered (≥ 1 for a full rep). */
+  rangeOfMotion: number;
+  flags: FormFlagCode[];
+}
+
+export interface RepEngineSnapshot {
+  phase: RepPhase;
+  repCount: number;
+  partialReps: number;
+  /** Smoothed primary joint angle (deg). */
+  angle: number;
+  /** 0 at start position, 1 at the far end. */
+  progress: number;
+}
+
+export type RepEngineEvent =
+  | { type: 'phase'; phase: RepPhase; t: number }
+  | { type: 'rep'; rep: RepRecord }
+  | { type: 'partial'; at: 'start' | 'end'; t: number };
+
+export type FormFlagCode = 'torso_swing' | 'torso_lean' | 'hip_sag' | 'hip_pike' | 'asymmetry' | 'fast_eccentric' | 'short_rom_end' | 'short_rom_start';
+
+export interface FormCue {
+  code: FormFlagCode;
+  message: string;
+  severity: Severity;
+}
+
+export interface FormSnapshot {
+  /** Trunk deviation from the set's baseline (deg). */
+  torsoDeviation: number;
+  /** |left − right| primary joint angle (deg), or null when one side isn't visible. */
+  asymmetry: number | null;
+  bones: Record<BoneGroup, BoneStatus>;
+  /** The most severe active cue, if any. */
+  active: FormCue | null;
+}
+
+// ---------------------------------------------------------------- set summary
+
+export interface SetSummary {
+  id: string;
+  exercise: TrackedExercise;
+  load: { value: number; unit: WeightUnit } | null;
+  reps: number;
+  partialReps: number;
+  durationMs: number;
+  /** Mean seconds per completed rep. */
+  meanRepSeconds: number;
+  /** Mean eccentric / pause / concentric seconds, e.g. 2.1-0.4-1.0. */
+  tempo: { eccentric: number; pause: number; concentric: number };
+  formFlags: Partial<Record<FormFlagCode, number>>;
+  calories: number;
+  repRecords: RepRecord[];
+  endedAt: number;
+}
+
+// ---------------------------------------------------------------- state machine
+
+export type FitnessMode = 'IDLE' | 'SCAN_MACHINE' | 'SCAN_WEIGHT' | 'ACTIVE_SET' | 'SET_SUMMARY';
+
+export interface FitnessContext {
+  mode: FitnessMode;
+  /**
+   * Bumped on every accepted transition. Async producers (machine classifier, OCR) stamp their
+   * events with the epoch they started in; events from an older epoch are dropped.
+   */
+  epoch: number;
+  machine: GymExercise | null;
+  machineBox: NormRect | null;
+  machineConfidence: number;
+  load: { value: number; unit: WeightUnit; source: 'ocr' | 'manual' } | null;
+  setStartedAt: number | null;
+  lastSummary: SetSummary | null;
+}
+
+export type FitnessEvent =
+  | { type: 'START_MACHINE_SCAN' }
+  | { type: 'MACHINE_DETECTED'; epoch: number; machine: GymExercise; confidence: number; box: NormRect | null }
+  | { type: 'MACHINE_SELECTED'; machine: GymExercise }
+  | { type: 'CONFIRM_MACHINE' }
+  | { type: 'WEIGHT_LOCKED'; epoch: number; value: number; unit: WeightUnit }
+  | { type: 'WEIGHT_SET_MANUAL'; value: number; unit: WeightUnit }
+  /** Clear the load (including a manual one) so the next OCR lock is accepted. */
+  | { type: 'WEIGHT_RESCAN' }
+  | { type: 'START_SET'; t: number }
+  | { type: 'END_SET'; summary: SetSummary }
+  | { type: 'NEXT_SET' }
+  | { type: 'CHANGE_MACHINE' }
+  | { type: 'RESET' };
