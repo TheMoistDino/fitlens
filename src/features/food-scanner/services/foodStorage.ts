@@ -1,5 +1,6 @@
 import { sessionLog } from '@/features/dashboard/useSessionLog';
 import type { MacroItem, MacroSummary } from '@/core/events/events';
+import { useFoodLogStore } from '../store';
 import type { MealLoggedPayload } from './types';
 
 const DB_NAME = 'fitlens_food_db';
@@ -59,6 +60,27 @@ export async function persistMealLog(meal: MealLoggedPayload): Promise<void> {
     endedAt: meal.timestamp,
     macros: macroSummary,
   });
+
+  // 1b. Synchronize to useFoodLogStore
+  try {
+    const existing = useFoodLogStore.getState().dailyLogs.some((m) => m.id === meal.id);
+    if (!existing) {
+      useFoodLogStore.getState().addMeal({
+        id: meal.id,
+        name: meal.name,
+        calories: meal.calories,
+        protein: meal.macros.protein,
+        carbs: meal.macros.carbs,
+        fat: meal.macros.fat,
+        timestamp: meal.timestamp,
+        weightGrams: meal.weightGrams,
+        confidence: meal.confidence,
+        source: meal.source,
+      });
+    }
+  } catch (storeErr) {
+    console.warn('[foodStorage] useFoodLogStore sync fallback:', storeErr);
+  }
 
   // 2. Persist to IndexedDB for offline durability
   try {

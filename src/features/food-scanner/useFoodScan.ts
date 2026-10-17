@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MacroSummary } from '@/core/events/events';
-import { sessionLog } from '@/features/dashboard/useSessionLog';
+import { useFoodLogStore } from './store';
 import type { FrameCallback } from '@/services/camera/useCameraStream';
 import {
   FoodDetectionService,
@@ -149,15 +149,32 @@ export function useFoodScan(options: UseFoodScanOptions = {}) {
 
   const logMeal = useCallback(() => {
     if (!macros) return;
-    sessionLog.add({
-      kind: 'meal',
-      id: crypto.randomUUID(),
-      endedAt: Date.now(),
-      macros,
+    const totals = macros.items.reduce(
+      (acc, item) => ({
+        p: acc.p + (item.protein || 0),
+        c: acc.c + (item.carbs || 0),
+        f: acc.f + (item.fat || 0),
+      }),
+      { p: 0, c: 0, f: 0 },
+    );
+
+    const mealName = macros.items.map((i) => i.name).filter(Boolean).join(', ') || 'Plate Meal';
+    const primaryItem = detailedItems[0];
+
+    useFoodLogStore.getState().addMeal({
+      name: mealName,
+      calories: macros.totalKcal,
+      protein: totals.p,
+      carbs: totals.c,
+      fat: totals.f,
+      weightGrams: primaryItem?.estimatedWeightGrams,
+      confidence: primaryItem?.confidenceScore,
+      source: macros.source === 'stepfun' ? 'stepfun' : 'mock',
     });
+
     setMacros(null);
     setDetailedItems([]);
-  }, [macros]);
+  }, [macros, detailedItems]);
 
   useEffect(() => () => void (timeoutRef.current && clearTimeout(timeoutRef.current)), []);
 

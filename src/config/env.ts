@@ -15,17 +15,17 @@ function num(value: string | undefined, fallback: number): number {
 }
 
 export const env = {
-  isDev: import.meta.env.DEV,
+  isDev: import.meta.env?.DEV ?? false,
   sentry: {
-    dsn: import.meta.env.VITE_SENTRY_DSN || undefined,
-    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT || import.meta.env.MODE,
+    dsn: import.meta.env?.VITE_SENTRY_DSN || undefined,
+    environment: import.meta.env?.VITE_SENTRY_ENVIRONMENT || import.meta.env?.MODE,
   },
   features: {
     /** Even Realities HUD. Off by default; the Null adapter is used when off or unavailable. */
-    evenRealities: bool(import.meta.env.VITE_ENABLE_EVEN_REALITIES),
+    evenRealities: bool(import.meta.env?.VITE_ENABLE_EVEN_REALITIES),
   },
   stepfun: {
-    keyframeIntervalMs: num(import.meta.env.VITE_STEPFUN_KEYFRAME_INTERVAL_S, 8) * 1000,
+    keyframeIntervalMs: num(import.meta.env?.VITE_STEPFUN_KEYFRAME_INTERVAL_S, 8) * 1000,
   },
 } as const;
 
