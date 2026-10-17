@@ -90,3 +90,24 @@ export function forearmProjectionAngle(
   const cos = Math.min(1, Math.max(-1, -proj / (upperLen * FOREARM_TO_UPPER_ARM)));
   return Math.acos(cos) * RAD2DEG;
 }
+
+/**
+ * Signed distance of the hip from the shoulder→ankle line, as a fraction of that line's length,
+ * in image space (side view). Positive = hip *below* the line (toward the floor → sag);
+ * negative = hip above it (pike / downward dog). Unlike the unsigned shoulder–hip–ankle angle, this
+ * tells the two faults apart. ~0.04 ≈ a 9° bend at the hips.
+ */
+export function signedHipOffset(
+  shoulder: { x: number; y: number },
+  hip: { x: number; y: number },
+  ankle: { x: number; y: number },
+  aspect: number,
+): number {
+  const dx = (ankle.x - shoulder.x) * aspect, dy = ankle.y - shoulder.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-9) return NaN;
+  const hx = (hip.x - shoulder.x) * aspect, hy = hip.y - shoulder.y;
+  // Image y points down, so with the line drawn left→right a positive cross product means "below".
+  const cross = dx * hy - dy * hx;
+  return (Math.sign(dx) || 1) * cross / len2;
+}

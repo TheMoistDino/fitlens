@@ -5,7 +5,8 @@ import type { FormFlagCode, SetSummary } from '../types';
 const FLAG_LABEL: Record<FormFlagCode, string> = {
   torso_swing: 'Torso swing',
   torso_lean: 'Leaning forward',
-  hip_sag: 'Hips out of line',
+  hip_sag: 'Hips sagging',
+  hip_pike: 'Hips too high',
   asymmetry: 'Uneven sides',
   fast_eccentric: 'Rushed eccentric',
   short_rom_end: 'Short range (end)',

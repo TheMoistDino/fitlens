@@ -77,8 +77,11 @@ export interface FormChecks {
   torsoSwing: boolean;
   /** Flag absolute forward lean beyond this many degrees from vertical (squat "chest up"). */
   maxTorsoLeanDeg?: number;
-  /** Flag shoulder–hip–ankle line dropping below this angle (push-up hip sag). */
-  minHipLineDeg?: number;
+  /**
+   * Plank-line check (push-ups): hip distance from the shoulder→ankle line as a fraction of body
+   * length, relative to the user's own top position. `sag` = hips toward the floor, `pike` = hips up.
+   */
+  bodyLine?: { sag: number; pike: number };
 }
 
 export interface ExerciseProfile {
@@ -153,7 +156,7 @@ export type RepEngineEvent =
   | { type: 'rep'; rep: RepRecord }
   | { type: 'partial'; at: 'start' | 'end'; t: number };
 
-export type FormFlagCode = 'torso_swing' | 'torso_lean' | 'hip_sag' | 'asymmetry' | 'fast_eccentric' | 'short_rom_end' | 'short_rom_start';
+export type FormFlagCode = 'torso_swing' | 'torso_lean' | 'hip_sag' | 'hip_pike' | 'asymmetry' | 'fast_eccentric' | 'short_rom_end' | 'short_rom_start';
 
 export interface FormCue {
   code: FormFlagCode;

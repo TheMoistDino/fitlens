@@ -6,7 +6,7 @@ import { captureKeyframe } from '@/services/camera/captureKeyframe';
 import { sessionLog } from '@/features/dashboard/useSessionLog';
 import { LM } from '@/ml/pose/geometry';
 import type { PoseLandmarkerService } from '@/ml/pose/PoseLandmarkerService';
-import { angleBetween, forearmProjectionAngle, jointAngle, sub, trunkAngleFromVertical, UP } from '../math/vector3';
+import { angleBetween, forearmProjectionAngle, jointAngle, signedHipOffset, sub, trunkAngleFromVertical, UP } from '../math/vector3';
 import { RepEngine } from './RepEngine';
 import { FormAnalyzer } from './FormAnalyzer';
 import { CueDispatcher } from '../feedback/cues';
@@ -60,6 +60,16 @@ function angleAt(frame: PoseFrame, ids: readonly [number, number, number], minVi
 
 function sideScore(frame: PoseFrame, ids: readonly number[]): number {
   return ids.reduce((s, i) => s + vis(frame, i), 0);
+}
+
+/** Signed hip offset from the shoulder→ankle line in image space (side view); see signedHipOffset. */
+function bodyLineOffset(frame: PoseFrame, ids: readonly [number, number, number]): number | null {
+  if (ids.some((i) => vis(frame, i) < MIN_VISIBILITY_SIDE)) return null;
+  const [s, h, a] = ids;
+  const S = frame.image[s], H = frame.image[h], A = frame.image[a];
+  if (!S || !H || !A) return null;
+  const off = signedHipOffset(S, H, A, frame.aspect);
+  return Number.isFinite(off) ? off : null;
 }
 
 /** Trunk angle from vertical: both-side midline in front view, near-side shoulder→hip in side view. */
@@ -173,7 +183,7 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
       if (primary === null) return;
 
       const lineSide: Side = trackedSide ?? (sideScore(frame, BODY_LINE.left) >= sideScore(frame, BODY_LINE.right) ? 'left' : 'right');
-      const hipLineAngle = profile.checks.minHipLineDeg !== undefined ? angleAt(frame, BODY_LINE[lineSide], MIN_VISIBILITY_SIDE) : null;
+      const hipOffset = profile.checks.bodyLine ? bodyLineOffset(frame, BODY_LINE[lineSide]) : null;
 
       const events = engine.update(primary, now);
       const snap = form.update({
@@ -181,7 +191,7 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
         trunkAngle: trunkAngle(frame, trackedSide),
         leftAngle: left,
         rightAngle: right,
-        hipLineAngle,
+        hipOffset,
         phase: engine.snapshot.phase,
       });
 
@@ -211,7 +221,7 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
 
       // Instantaneous cues (torso, asymmetry) → haptic/audio + bus, on change only.
       const active = form.snapshot.active;
-      if (active && (active.code === 'torso_swing' || active.code === 'torso_lean' || active.code === 'hip_sag' || active.code === 'asymmetry')) {
+      if (active && (active.code === 'torso_swing' || active.code === 'torso_lean' || active.code === 'hip_sag' || active.code === 'hip_pike' || active.code === 'asymmetry')) {
         cuesRef.current.fire(active, now);
       }
       const code = active?.code ?? null;

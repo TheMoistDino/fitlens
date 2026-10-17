@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FOREARM_TO_UPPER_ARM, angleBetween, forearmProjectionAngle, jointAngle, trunkAngleFromVertical, vec } from '../math/vector3';
+import { FOREARM_TO_UPPER_ARM, angleBetween, forearmProjectionAngle, jointAngle, signedHipOffset, trunkAngleFromVertical, vec } from '../math/vector3';
 
 describe('vector3', () => {
   it('computes interior joint angles via the dot product', () => {
@@ -51,6 +51,21 @@ describe('vector3', () => {
       expect(forearmProjectionAngle(wide.s, wide.e, wide.w, k)).toBeCloseTo(a, 5);
       // Ignoring the aspect ratio would give a noticeably different angle:
       expect(Math.abs(forearmProjectionAngle(wide.s, wide.e, wide.w, 1) - a)).toBeGreaterThan(5);
+    });
+  });
+
+  describe('signedHipOffset (plank line, image y-down)', () => {
+    it('is ~0 for a straight plank', () => {
+      expect(signedHipOffset({ x: 0.8, y: 0.5 }, { x: 0.5, y: 0.55 }, { x: 0.2, y: 0.6 }, 1)).toBeCloseTo(0, 5);
+    });
+    it('is positive when the hips sag toward the floor, whichever way the user faces', () => {
+      const facingLeft = signedHipOffset({ x: 0.2, y: 0.5 }, { x: 0.5, y: 0.6 }, { x: 0.8, y: 0.5 }, 1);
+      const facingRight = signedHipOffset({ x: 0.8, y: 0.5 }, { x: 0.5, y: 0.6 }, { x: 0.2, y: 0.5 }, 1);
+      expect(facingLeft).toBeGreaterThan(0.1);
+      expect(facingRight).toBeCloseTo(facingLeft, 6);
+    });
+    it('is negative when the hips pike up (downward dog)', () => {
+      expect(signedHipOffset({ x: 0.2, y: 0.6 }, { x: 0.5, y: 0.3 }, { x: 0.8, y: 0.6 }, 1)).toBeLessThan(-0.3);
     });
   });
 });

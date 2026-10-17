@@ -8,7 +8,7 @@ import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, For
  * Per frame:
  *  - torso swing (checks.torsoSwing): trunk movement vs. rest posture during a rep (15°/25° side, 20°/30° front)
  *  - torso lean (checks.maxTorsoLeanDeg): absolute trunk angle from vertical over the limit
- *  - hip sag (checks.minHipLineDeg): shoulder–hip–ankle line drops 15° below the user's own top position
+ *  - plank line (checks.bodyLine): hips sag below / pike above the shoulder→ankle line vs. the top position
  *  - bilateral asymmetry (front view only): |left − right| primary joint angle > 12°, sustained
  * Per rep (from RepEngine events):
  *  - eccentric faster than half the target tempo → "Control the eccentric"
@@ -20,10 +20,13 @@ import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, For
 /** Torso swing limits; front view gets more slack because forward/back motion there is all depth (noisy). */
 export const TORSO_LIMITS = { side: { warn: 15, bad: 25 }, front: { warn: 20, bad: 30 } } as const;
 export const ASYMMETRY_DEG = 12;
-/** Push-up: flag when the body line drops this far below the user's own line at the top. */
-export const HIP_DROP_DEG = 15;
-/** …and always flag a line this bent, whatever the baseline. */
-export const HIP_LINE_FLOOR_DEG = 135;
+/**
+ * Push-up plank line. The rest baseline only absorbs *small* offsets (loose clothing shifting the hip
+ * landmark), so starting in a sag or a pike can't become the user's "normal".
+ */
+export const BODY_LINE_BASELINE_RANGE = { min: -0.02, max: 0.03 } as const;
+/** Always flag offsets this large, whatever the baseline. */
+export const BODY_LINE_HARD = { sag: 0.1, pike: 0.12 } as const;
 const SUSTAIN_FRAMES = 6;
 const SWING_SUSTAIN_FRAMES = 8;
 /** Slow EMA for rest-position baselines: re-learned every time the user is at the start between reps. */
@@ -39,8 +42,8 @@ export interface FormFrameInput {
   trunkAngle: number;
   leftAngle: number | null;
   rightAngle: number | null;
-  /** Shoulder–hip–ankle angle on the tracked side (deg), when visible. */
-  hipLineAngle?: number | null;
+  /** Signed hip offset from the shoulder→ankle line (+ = toward the floor), when visible. */
+  hipOffset?: number | null;
   phase: RepPhase;
 }
 
@@ -61,13 +64,14 @@ export class FormAnalyzer {
    * moving the hip point) is baked into the baseline, so only *changes* during a rep are flagged.
    */
   private restTrunk = createEma(BASELINE_ALPHA);
-  private restHipLine = createEma(BASELINE_ALPHA);
+  private restHipOffset = createEma(BASELINE_ALPHA);
   private torsoEma = createEma(0.2);
   private leanEma = createEma(0.3);
   private hipEma = createEma(0.3);
   private swing = new Streak(SWING_SUSTAIN_FRAMES);
   private lean = new Streak();
   private sag = new Streak();
+  private pike = new Streak();
   private asym = new Streak();
   private eventCue: { cue: FormCue; until: number } | null = null;
   private repFlags = new Set<FormFlagCode>();
@@ -97,7 +101,7 @@ export class FormAnalyzer {
     return flags;
   }
 
-  update({ t, trunkAngle, leftAngle, rightAngle, hipLineAngle, phase }: FormFrameInput): FormSnapshot {
+  update({ t, trunkAngle, leftAngle, rightAngle, hipOffset, phase }: FormFrameInput): FormSnapshot {
     const { checks, cameraView } = this.profile;
     const moving = phase !== 'READY';
     const frameCues: FormCue[] = [];
@@ -126,14 +130,17 @@ export class FormAnalyzer {
       }
     }
 
-    // --- hip line (push-up sag): relative to the user's own line at the top, plus a hard floor
-    if (checks.minHipLineDeg !== undefined && hipLineAngle != null && Number.isFinite(hipLineAngle)) {
-      if (!moving) this.restHipLine.next(hipLineAngle);
-      const line = this.hipEma.next(hipLineAngle);
-      const rest = this.restHipLine.value;
-      const dropped = rest !== null && line < rest - HIP_DROP_DEG && line < checks.minHipLineDeg;
-      if (this.sag.update(dropped || line < HIP_LINE_FLOOR_DEG)) {
-        frameCues.push({ code: 'hip_sag', message: 'Hips sagging — brace your core', severity: 'warn' });
+    // --- plank line (push-ups): signed, so a sag and a pike (downward dog) are told apart
+    if (checks.bodyLine && hipOffset != null && Number.isFinite(hipOffset)) {
+      if (!moving) this.restHipOffset.next(hipOffset);
+      const offset = this.hipEma.next(hipOffset);
+      const { min, max } = BODY_LINE_BASELINE_RANGE;
+      const base = Math.min(max, Math.max(min, this.restHipOffset.value ?? 0));
+      const sagging = this.sag.update(offset - base > checks.bodyLine.sag || offset > BODY_LINE_HARD.sag);
+      const piking = this.pike.update(base - offset > checks.bodyLine.pike || offset < -BODY_LINE_HARD.pike);
+      if (sagging) frameCues.push({ code: 'hip_sag', message: 'Hips sagging — squeeze glutes, brace core', severity: 'warn' });
+      if (piking) frameCues.push({ code: 'hip_pike', message: 'Hips too high — lower into a straight line', severity: 'warn' });
+      if (sagging || piking) {
         torso = 'warn';
         legs = 'warn';
       }

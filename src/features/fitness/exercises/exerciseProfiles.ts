@@ -148,7 +148,7 @@ export const BODYWEIGHT_PROFILES: Record<BodyweightExercise, ExerciseProfile> = 
     cameraView: 'side',
     orientation: 'landscape',
     setupHint: 'Phone on the floor, turned sideways (landscape), to your side ~2 m away, head to feet in frame',
-    checks: { torsoSwing: false, minHipLineDeg: 160 },
+    checks: { torsoSwing: false, bodyLine: { sag: 0.04, pike: 0.06 } }, // ~9° sag / ~14° pike
     joint: 'elbow',
     startAngle: 160,
     endAngle: 95,

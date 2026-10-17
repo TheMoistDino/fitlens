@@ -56,27 +56,41 @@ describe('FormAnalyzer', () => {
     expect(f.snapshot.active?.code).toBe('torso_lean');
   });
 
-  it('push-up: flags hips dropping below the user’s own top-position line', () => {
+  it('push-up: flags a modest sag (~10° at the hips), not just extreme ones', () => {
     const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 172, phase: 'READY' });
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 168 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0, phase: 'READY' });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0.02 });
     expect(f.snapshot.active).toBeNull();
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 145 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0.05 });
     expect(f.snapshot.active?.code).toBe('hip_sag');
     expect(f.snapshot.bones.torso).toBe('warn');
   });
 
-  it('push-up: baggy clothing that bends the measured line at rest is not a sag', () => {
+  it('push-up: downward dog is "hips too high", never "sagging"', () => {
     const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
-    // Loose pants pull the detected hip point down: the line reads ~150° even with a straight body.
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 150, phase: 'READY' });
-    frames(f, 30, { trunkAngle: 85, hipLineAngle: 146 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0, phase: 'READY' });
+    frames(f, 20, { trunkAngle: 60, hipOffset: -0.3 });
+    expect(f.snapshot.active?.code).toBe('hip_pike');
+    expect(f.flagCounts.hip_sag).toBeUndefined();
+  });
+
+  it('push-up: holding a pike at rest cannot become the baseline', () => {
+    const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
+    frames(f, 40, { trunkAngle: 60, hipOffset: -0.3, phase: 'READY' });
+    expect(f.snapshot.active?.code).toBe('hip_pike');
+  });
+
+  it('push-up: baggy clothing shifting the hip point a little is not a sag', () => {
+    const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
+    // Loose pants pull the detected hip ~2.5% of body length toward the floor with a straight body.
+    frames(f, 30, { trunkAngle: 85, hipOffset: 0.025, phase: 'READY' });
+    frames(f, 30, { trunkAngle: 85, hipOffset: 0.03 });
     expect(f.snapshot.active).toBeNull();
   });
 
-  it('push-up: a badly bent line is flagged even without a baseline', () => {
+  it('push-up: a big sag is flagged even without a baseline', () => {
     const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 125 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0.12 });
     expect(f.snapshot.active?.code).toBe('hip_sag');
   });
 
@@ -115,8 +129,8 @@ describe('FormAnalyzer', () => {
 
   it('a single bad frame does not flash a cue', () => {
     const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
-    frames(f, 20, { trunkAngle: 85, hipLineAngle: 172, phase: 'READY' });
-    frames(f, 1, { trunkAngle: 85, hipLineAngle: 110 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0, phase: 'READY' });
+    frames(f, 1, { trunkAngle: 85, hipOffset: 0.2 });
     expect(f.snapshot.active).toBeNull();
   });
 });

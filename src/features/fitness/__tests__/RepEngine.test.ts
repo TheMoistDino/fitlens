@@ -106,4 +106,49 @@ describe('RepEngine', () => {
     expect(e.snapshot.repCount).toBe(3);
     expect(events.find((x) => x.type === 'phase')).toMatchObject({ phase: 'ECCENTRIC' });
   });
+
+  describe('pose-tracking glitches', () => {
+    // Seeded noise + occasional ±35° single-frame spikes (a wrist landmark jumping), as seen on-device.
+    function noisy(engine: RepEngine, start: number, segs: Array<[number, number]>) {
+      let seed = 42;
+      const rand = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31;
+      const gauss = () => Math.sqrt(-2 * Math.log(rand() + 1e-9)) * Math.cos(2 * Math.PI * rand());
+      const events: RepEngineEvent[] = [];
+      let t = 0, a = start;
+      for (const [target, secs] of segs) {
+        const n = Math.round(secs * FPS), from = a;
+        for (let i = 1; i <= n; i++, t += DT) {
+          a = from + ((target - from) * i) / n;
+          const spike = rand() < 0.04 ? (rand() < 0.5 ? -35 : 35) : 0;
+          events.push(...engine.update(a + gauss() * 4 + spike, t));
+        }
+      }
+      return events.filter((e) => e.type === 'rep').map((e) => (e as Extract<RepEngineEvent, { type: 'rep' }>).rep);
+    }
+
+    it('slow curls: every rep counted, slow eccentric measured as slow', () => {
+      const e = new RepEngine(GYM_PROFILES.bicep_curl);
+      const rep: Array<[number, number]> = [[50, 1.2], [50, 0.4], [160, 3], [160, 0.6]];
+      const reps = noisy(e, 160, [[160, 1], ...rep, ...rep, ...rep, ...rep]);
+      expect(reps).toHaveLength(4);
+      expect(e.snapshot.partialReps).toBe(0);
+      for (const r of reps) expect(r.eccentricMs).toBeGreaterThan(1500);
+    });
+
+    it('slow squats: an early glitch near the bottom does not shorten the eccentric', () => {
+      const e = new RepEngine(BODYWEIGHT_PROFILES.squat);
+      const rep: Array<[number, number]> = [[95, 3], [95, 0.4], [170, 1.2], [170, 0.6]];
+      const reps = noisy(e, 170, [[170, 1], ...rep, ...rep, ...rep, ...rep]);
+      expect(reps).toHaveLength(4);
+      expect(e.snapshot.partialReps).toBe(0);
+      for (const r of reps) expect(r.eccentricMs).toBeGreaterThan(1500);
+    });
+
+    it('a genuinely dropped rep is still measured as fast', () => {
+      const e = new RepEngine(BODYWEIGHT_PROFILES.squat);
+      const reps = noisy(e, 170, [[170, 1], [95, 0.35], [95, 0.3], [170, 1], [170, 0.6]]);
+      expect(reps).toHaveLength(1);
+      expect(reps[0]!.eccentricMs).toBeLessThan(600);
+    });
+  });
 });
