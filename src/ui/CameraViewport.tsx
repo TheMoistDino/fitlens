@@ -32,7 +32,11 @@ export function CameraViewport({ videoRef, status, error, mirror, onRetry, child
   }, [videoRef]);
 
   return (
-    <div className="relative mx-auto w-full max-h-[62vh] overflow-hidden rounded-2xl bg-black" style={{ aspectRatio: aspect, maxWidth: `calc(62vh * ${aspect})` }}>
+    // Taller cap in landscape (phones held sideways have little vertical room to spare).
+    <div
+      className="relative mx-auto w-full max-h-[var(--cam-vh)] overflow-hidden rounded-2xl bg-black [--cam-vh:62vh] landscape:[--cam-vh:78vh]"
+      style={{ aspectRatio: aspect, maxWidth: `calc(var(--cam-vh) * ${aspect})` }}
+    >
       <video
         ref={videoRef}
         className="absolute inset-0 h-full w-full object-fill"

@@ -6,9 +6,9 @@ import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, For
  * fault on one lift is correct technique on another (squats *should* lean forward).
  *
  * Per frame:
- *  - torso swing (checks.torsoSwing): trunk deviation from the set's own baseline > 15° / > 25°
+ *  - torso swing (checks.torsoSwing): trunk movement vs. rest posture during a rep (15°/25° side, 20°/30° front)
  *  - torso lean (checks.maxTorsoLeanDeg): absolute trunk angle from vertical over the limit
- *  - hip sag (checks.minHipLineDeg): shoulder–hip–ankle line bent below the limit
+ *  - hip sag (checks.minHipLineDeg): shoulder–hip–ankle line drops 15° below the user's own top position
  *  - bilateral asymmetry (front view only): |left − right| primary joint angle > 12°, sustained
  * Per rep (from RepEngine events):
  *  - eccentric faster than half the target tempo → "Control the eccentric"
@@ -17,11 +17,17 @@ import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, For
  * Every per-frame fault must persist for a few frames before it shows, so one bad landmark frame
  * can't flash a cue.
  */
-export const TORSO_WARN_DEG = 15;
-export const TORSO_BAD_DEG = 25;
+/** Torso swing limits; front view gets more slack because forward/back motion there is all depth (noisy). */
+export const TORSO_LIMITS = { side: { warn: 15, bad: 25 }, front: { warn: 20, bad: 30 } } as const;
 export const ASYMMETRY_DEG = 12;
+/** Push-up: flag when the body line drops this far below the user's own line at the top. */
+export const HIP_DROP_DEG = 15;
+/** …and always flag a line this bent, whatever the baseline. */
+export const HIP_LINE_FLOOR_DEG = 135;
 const SUSTAIN_FRAMES = 6;
-const BASELINE_FRAMES = 15;
+const SWING_SUSTAIN_FRAMES = 8;
+/** Slow EMA for rest-position baselines: re-learned every time the user is at the start between reps. */
+const BASELINE_ALPHA = 0.1;
 /** How long an event-driven cue (fast eccentric, short ROM) stays on screen. */
 const EVENT_CUE_MS = 2500;
 
@@ -41,19 +47,25 @@ export interface FormFrameInput {
 /** Counts consecutive frames a condition holds. */
 class Streak {
   private n = 0;
+  constructor(private readonly frames = SUSTAIN_FRAMES) {}
   update(on: boolean): boolean {
     this.n = on ? this.n + 1 : 0;
-    return this.n >= SUSTAIN_FRAMES;
+    return this.n >= this.frames;
   }
 }
 
 export class FormAnalyzer {
-  private baselineSamples: number[] = [];
-  private baseline: number | null = null;
-  private torsoEma = createEma(0.3);
+  /**
+   * Baselines come from frames at the rest position (phase READY), not the first frames after Start,
+   * when the user is often still stepping into place. Clothing that shifts landmarks (baggy pants
+   * moving the hip point) is baked into the baseline, so only *changes* during a rep are flagged.
+   */
+  private restTrunk = createEma(BASELINE_ALPHA);
+  private restHipLine = createEma(BASELINE_ALPHA);
+  private torsoEma = createEma(0.2);
   private leanEma = createEma(0.3);
   private hipEma = createEma(0.3);
-  private swing = new Streak();
+  private swing = new Streak(SWING_SUSTAIN_FRAMES);
   private lean = new Streak();
   private sag = new Streak();
   private asym = new Streak();
@@ -92,17 +104,15 @@ export class FormAnalyzer {
     let torso: BoneStatus = 'good';
     let legs: BoneStatus = 'good';
 
-    // --- torso swing vs. per-set baseline (independent of phone tilt)
-    if (this.baseline === null && Number.isFinite(trunkAngle)) {
-      this.baselineSamples.push(trunkAngle);
-      if (this.baselineSamples.length >= BASELINE_FRAMES) {
-        this.baseline = this.baselineSamples.reduce((a, b) => a + b, 0) / this.baselineSamples.length;
-      }
-    }
-    const torsoDeviation =
-      this.baseline !== null && Number.isFinite(trunkAngle) ? this.torsoEma.next(Math.abs(trunkAngle - this.baseline)) : 0;
-    if (checks.torsoSwing && this.swing.update(torsoDeviation > TORSO_WARN_DEG)) {
-      const bad = torsoDeviation > TORSO_BAD_DEG;
+    // --- torso swing vs. the user's own rest posture (independent of phone tilt)
+    if (!moving && Number.isFinite(trunkAngle)) this.restTrunk.next(trunkAngle);
+    const restTrunk = this.restTrunk.value;
+    let torsoDeviation = 0;
+    if (moving && restTrunk !== null && Number.isFinite(trunkAngle)) torsoDeviation = this.torsoEma.next(Math.abs(trunkAngle - restTrunk));
+    else this.torsoEma.reset();
+    const limits = TORSO_LIMITS[cameraView];
+    if (checks.torsoSwing && this.swing.update(torsoDeviation > limits.warn)) {
+      const bad = torsoDeviation > limits.bad;
       frameCues.push({ code: 'torso_swing', message: bad ? 'Stop swinging — stay tall' : 'Control the momentum — torso still', severity: bad ? 'critical' : 'warn' });
       torso = bad ? 'bad' : 'warn';
     }
@@ -116,11 +126,14 @@ export class FormAnalyzer {
       }
     }
 
-    // --- hip line (push-up sag / pike)
+    // --- hip line (push-up sag): relative to the user's own line at the top, plus a hard floor
     if (checks.minHipLineDeg !== undefined && hipLineAngle != null && Number.isFinite(hipLineAngle)) {
+      if (!moving) this.restHipLine.next(hipLineAngle);
       const line = this.hipEma.next(hipLineAngle);
-      if (this.sag.update(line < checks.minHipLineDeg)) {
-        frameCues.push({ code: 'hip_sag', message: 'Keep hips in line with shoulders', severity: 'warn' });
+      const rest = this.restHipLine.value;
+      const dropped = rest !== null && line < rest - HIP_DROP_DEG && line < checks.minHipLineDeg;
+      if (this.sag.update(dropped || line < HIP_LINE_FLOOR_DEG)) {
+        frameCues.push({ code: 'hip_sag', message: 'Hips sagging — brace your core', severity: 'warn' });
         torso = 'warn';
         legs = 'warn';
       }
@@ -159,7 +172,8 @@ export class FormAnalyzer {
           ? { code: 'short_rom_end', message: this.profile.shortAtEndCue, severity: 'warn' }
           : { code: 'short_rom_start', message: this.profile.shortAtStartCue, severity: 'warn' };
     } else if (e.type === 'rep') {
-      const minEccentricMs = Math.max(800, this.profile.tempo.eccentric * 500);
+      // Only flag clearly dropped reps. Even a controlled 1–1.5 s lowering is fine; < ~0.6 s is a drop.
+      const minEccentricMs = Math.max(600, this.profile.tempo.eccentric * 300);
       if (e.rep.eccentricMs < minEccentricMs) cue = { code: 'fast_eccentric', message: 'Control the eccentric — slow it down', severity: 'warn' };
       else if (e.rep.flags.includes('short_rom_start')) cue = { code: 'short_rom_start', message: this.profile.shortAtStartCue, severity: 'info' };
     }

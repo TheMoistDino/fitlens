@@ -9,6 +9,7 @@ import { BODYWEIGHT_LIST, BODYWEIGHT_PROFILES } from '@/features/fitness/exercis
 import { useFitnessTracker } from '@/features/fitness/engine/useFitnessTracker';
 import { FitnessHUD } from '@/features/fitness/components/FitnessHUD';
 import { SetupHint } from '@/features/fitness/components/SetupHint';
+import { RotateHint, useIsPortrait } from '@/features/fitness/components/RotateHint';
 import { SetSummaryCard } from '@/features/fitness/components/SetSummaryCard';
 import type { BodyweightExercise, SetSummary } from '@/features/fitness/types';
 import { HudPanel } from './components/HudPanel';
@@ -26,6 +27,8 @@ export default function WorkoutPage() {
   const [summary, setSummary] = useState<SetSummary | null>(null);
   const [coach, setCoach] = useState<SponsorEventMap['coach:feedback'] | null>(null);
   const profile = BODYWEIGHT_PROFILES[exercise];
+  const isPortrait = useIsPortrait();
+  const needsRotate = profile.orientation === 'landscape' && isPortrait && stage !== 'summary';
 
   const poseServiceRef = useRef<PoseLandmarkerService | null>(null);
   const [poseStatus, setPoseStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -83,6 +86,7 @@ export default function WorkoutPage() {
       </header>
 
       <CameraViewport videoRef={camera.videoRef} status={camera.status} error={camera.error} mirror={mirror} onRetry={() => void camera.start()}>
+        {needsRotate && <RotateHint />}
         {stage === 'active' && (
           <FitnessHUD
             poseRef={tracker.poseRef}

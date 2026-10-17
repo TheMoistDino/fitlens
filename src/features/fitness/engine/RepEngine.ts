@@ -22,9 +22,12 @@ const MIN_REP_MS = 500;
 const TWITCH_BANDS = 2;
 
 interface Timing {
+  /** Last frame the user was still at the start position — the true start of the movement. */
   repStart: number;
   firstEnd: number;
   inflectionStart: number;
+  /** Last frame still at the far end — the true start of the return phase. */
+  lastAtEnd: number;
   secondStart: number;
   maxProgress: number;
   minProgressInSecond: number;
@@ -39,6 +42,8 @@ export class RepEngine {
   private timing: Timing = this.freshTiming(0);
   private lastAngle = NaN;
   private lastProgress = 0;
+  /** Last time progress was inside the start band; phases are timed from real turnarounds, not band edges. */
+  private lastAtStart = 0;
   private readonly d: number;
 
   constructor(private readonly profile: ExerciseProfile) {
@@ -90,8 +95,11 @@ export class RepEngine {
 
     switch (this.phase) {
       case 'READY':
-        if (p > d) {
-          this.timing = this.freshTiming(t);
+        if (p <= d) {
+          this.lastAtStart = t;
+        } else {
+          // Time the phase from when the user actually left the start, not from crossing the 10° band.
+          this.timing = this.freshTiming(Math.max(this.lastAtStart, t - 1000));
           this.timing.maxProgress = p;
           go(this.firstPhase);
         }
@@ -105,6 +113,7 @@ export class RepEngine {
           if (p >= 1 - d) {
             this.timing.firstEnd = t;
             this.timing.inflectionStart = t;
+            this.timing.lastAtEnd = t;
             go('INFLECTION');
           } else if (p < d * 0.5) {
             // Turned around early. Only a meaningful attempt counts as a partial; wobble is ignored.
@@ -121,7 +130,7 @@ export class RepEngine {
             go('REP_COMPLETED');
           } else if (p >= 1 - d) {
             // Went back to the far end (pause / twitch): resume the inflection hold.
-            this.timing.inflectionStart = t;
+            this.timing.lastAtEnd = t;
             go('INFLECTION');
           } else if (p > this.timing.minProgressInSecond + TWITCH_BANDS * d) {
             // Turned around before getting back to the start.
@@ -141,8 +150,10 @@ export class RepEngine {
       }
 
       case 'INFLECTION':
+        if (p >= 1 - d) this.timing.lastAtEnd = t;
         if (p < 1 - 2 * d) {
-          this.timing.secondStart = t;
+          // The return phase really began when the user left the far end, not when they cleared the band.
+          this.timing.secondStart = this.timing.lastAtEnd;
           go(this.secondPhase);
         }
         break;
@@ -174,6 +185,6 @@ export class RepEngine {
   }
 
   private freshTiming(t: number): Timing {
-    return { repStart: t, firstEnd: t, inflectionStart: t, secondStart: t, maxProgress: 0, minProgressInSecond: Infinity };
+    return { repStart: t, firstEnd: t, inflectionStart: t, lastAtEnd: t, secondStart: t, maxProgress: 0, minProgressInSecond: Infinity };
   }
 }

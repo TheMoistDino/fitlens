@@ -60,3 +60,33 @@ export function createEma(alpha: number) {
     },
   };
 }
+
+/** Typical forearm (elbow→wrist landmark) length as a fraction of the upper arm (shoulder→elbow). */
+export const FOREARM_TO_UPPER_ARM = 0.8;
+
+/**
+ * Elbow angle from a *front-facing* camera without trusting depth.
+ *
+ * In a front-view curl the forearm swings toward the lens, so its 2D image length collapses and the
+ * model's z estimate is noisy. But the forearm's projection onto the upper-arm axis still tracks the
+ * true angle: cos θ = −(forearm · û) / L, where û points shoulder→elbow and L is the forearm's real
+ * length, estimated from the (unforeshortened) upper arm. θ = 180° hanging, ~90° forearm level,
+ * ~40° fully curled.
+ *
+ * Inputs are normalised image coords; `aspect` = videoWidth / videoHeight restores square pixels.
+ */
+export function forearmProjectionAngle(
+  shoulder: { x: number; y: number },
+  elbow: { x: number; y: number },
+  wrist: { x: number; y: number },
+  aspect: number,
+): number {
+  const ux = (elbow.x - shoulder.x) * aspect, uy = elbow.y - shoulder.y;
+  const upperLen = Math.hypot(ux, uy);
+  if (upperLen < 1e-6) return NaN;
+  const fx = (wrist.x - elbow.x) * aspect, fy = wrist.y - elbow.y;
+  const proj = (fx * ux + fy * uy) / upperLen;
+  // Interior angle is measured against elbow→shoulder (−û), hence the minus sign.
+  const cos = Math.min(1, Math.max(-1, -proj / (upperLen * FOREARM_TO_UPPER_ARM)));
+  return Math.acos(cos) * RAD2DEG;
+}

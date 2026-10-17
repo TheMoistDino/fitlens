@@ -6,7 +6,7 @@ import { captureKeyframe } from '@/services/camera/captureKeyframe';
 import { sessionLog } from '@/features/dashboard/useSessionLog';
 import { LM } from '@/ml/pose/geometry';
 import type { PoseLandmarkerService } from '@/ml/pose/PoseLandmarkerService';
-import { angleBetween, jointAngle, sub, trunkAngleFromVertical, UP } from '../math/vector3';
+import { angleBetween, forearmProjectionAngle, jointAngle, sub, trunkAngleFromVertical, UP } from '../math/vector3';
 import { RepEngine } from './RepEngine';
 import { FormAnalyzer } from './FormAnalyzer';
 import { CueDispatcher } from '../feedback/cues';
@@ -34,6 +34,19 @@ const BODY_LINE = {
 } as const;
 
 const vis = (frame: PoseFrame, i: number) => frame.image[i]?.visibility ?? 0;
+
+/** Wrist confidence collapses when it crosses in front of the shoulder at the top of a curl. */
+const MIN_WRIST_VISIBILITY_CURL = 0.1;
+
+/** Front-view curl angle: needs shoulder + elbow solidly, tolerates a poorly-seen wrist. */
+function forearmAngleAt(frame: PoseFrame, ids: readonly [number, number, number]): number | null {
+  const [s, e, w] = ids;
+  if (vis(frame, s) < MIN_VISIBILITY_FRONT || vis(frame, e) < MIN_VISIBILITY_FRONT || vis(frame, w) < MIN_WRIST_VISIBILITY_CURL) return null;
+  const S = frame.image[s], E = frame.image[e], W = frame.image[w];
+  if (!S || !E || !W) return null;
+  const deg = forearmProjectionAngle(S, E, W, frame.aspect);
+  return Number.isFinite(deg) ? deg : null;
+}
 
 function angleAt(frame: PoseFrame, ids: readonly [number, number, number], minVis: number): number | null {
   // Visibility lives on the image landmarks; geometry comes from metric world landmarks.
@@ -123,7 +136,12 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
         return;
       }
       lastSeenRef.current = now;
-      const frame: PoseFrame = { t: now, image: detected.image as NormalizedLandmark[], world: detected.world.map(toVec3) };
+      const frame: PoseFrame = {
+        t: now,
+        image: detected.image as NormalizedLandmark[],
+        world: detected.world.map(toVec3),
+        aspect: video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9,
+      };
       poseRef.current = frame;
       if (!engine || !form || !profile) return;
 
@@ -143,6 +161,10 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
         primary = angleAt(frame, joint[trackedSide], MIN_VISIBILITY_SIDE);
         left = trackedSide === 'left' ? primary : null;
         right = trackedSide === 'right' ? primary : null;
+      } else if (profile.angleMethod === 'forearmProjection' && profile.joint === 'elbow') {
+        left = forearmAngleAt(frame, JOINTS.elbow.left);
+        right = forearmAngleAt(frame, JOINTS.elbow.right);
+        primary = left !== null && right !== null ? (left + right) / 2 : (left ?? right);
       } else {
         left = angleAt(frame, joint.left, MIN_VISIBILITY_FRONT);
         right = angleAt(frame, joint.right, MIN_VISIBILITY_FRONT);

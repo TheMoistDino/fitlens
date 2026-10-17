@@ -35,6 +35,8 @@ export interface PoseFrame {
   image: NormalizedLandmark[];
   /** Metric, hip-centred landmarks (3D angle math). Falls back to image landmarks when absent. */
   world: Vec3[];
+  /** videoWidth / videoHeight — converts normalised image coords back to square pixels. */
+  aspect: number;
 }
 
 export interface WeightReading {
@@ -89,6 +91,13 @@ export interface ExerciseProfile {
    * 'front' = both sides visible, averaged, and checked for left/right asymmetry.
    */
   cameraView: CameraView;
+  /**
+   * How the primary joint angle is measured. 'world' = 3D world landmarks (default).
+   * 'forearmProjection' = depth-free 2D method for front-view curls (see forearmProjectionAngle).
+   */
+  angleMethod?: 'world' | 'forearmProjection';
+  /** Phone orientation that tracks this exercise best; the UI prompts when it doesn't match. */
+  orientation?: 'portrait' | 'landscape';
   /** One-line setup instruction shown before and during the set. */
   setupHint: string;
   checks: FormChecks;
