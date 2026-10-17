@@ -186,11 +186,16 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
       const hipOffset = profile.checks.bodyLine ? bodyLineOffset(frame, BODY_LINE[lineSide]) : null;
 
       const events = engine.update(primary, now);
+      // Left/right comparison needs both wrists clearly seen; the low-confidence wrists we accept for
+      // counting curls (hand crossing the shoulder, hands on a bar) are too shaky to compare sides.
+      const curlMethod = profile.angleMethod === 'forearmProjection';
+      const formLeft = curlMethod && vis(frame, LM.leftWrist) < MIN_VISIBILITY_FRONT ? null : left;
+      const formRight = curlMethod && vis(frame, LM.rightWrist) < MIN_VISIBILITY_FRONT ? null : right;
       const snap = form.update({
         t: now,
         trunkAngle: trunkAngle(frame, trackedSide),
-        leftAngle: left,
-        rightAngle: right,
+        leftAngle: formLeft,
+        rightAngle: formRight,
         hipOffset,
         phase: engine.snapshot.phase,
       });

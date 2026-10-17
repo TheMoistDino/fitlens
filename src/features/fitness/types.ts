@@ -99,6 +99,10 @@ export interface ExerciseProfile {
    * 'forearmProjection' = depth-free 2D method for front-view curls (see forearmProjectionAngle).
    */
   angleMethod?: 'world' | 'forearmProjection';
+  /** Left/right difference (deg) that counts as uneven (front view only). Default 12°. */
+  asymmetryDeg?: number;
+  /** Eccentric faster than this (ms) gets "Control the eccentric". Default 600 ms. */
+  minEccentricMs?: number;
   /** Phone orientation that tracks this exercise best; the UI prompts when it doesn't match. */
   orientation?: 'portrait' | 'landscape';
   /** One-line setup instruction shown before and during the set. */

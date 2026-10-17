@@ -22,6 +22,8 @@ export const GYM_PROFILES: Record<GymExercise, ExerciseProfile> = {
     muscles: 'Biceps · forearms',
     cameraView: 'front',
     angleMethod: 'forearmProjection',
+    // 2D forearm estimates differ a little side to side (and a barbell hides the hands), so allow more.
+    asymmetryDeg: 20,
     setupHint: 'Face the camera, ~2 m away, waist-up with both arms in frame',
     checks: SWING,
     joint: 'elbow',
@@ -128,6 +130,8 @@ export const BODYWEIGHT_PROFILES: Record<BodyweightExercise, ExerciseProfile> = 
     setupHint: 'Camera to your side (or 45°) at hip height, ~2.5 m away, head to feet in frame',
     // Squats lean forward by design, so no "swing" check — only an absolute lean limit.
     checks: { torsoSwing: false, maxTorsoLeanDeg: 55 },
+    // Quick bodyweight descents are normal; only flag genuine drops.
+    minEccentricMs: 500,
     joint: 'knee',
     startAngle: 165,
     endAngle: 105,
@@ -148,7 +152,7 @@ export const BODYWEIGHT_PROFILES: Record<BodyweightExercise, ExerciseProfile> = 
     cameraView: 'side',
     orientation: 'landscape',
     setupHint: 'Phone on the floor, turned sideways (landscape), to your side ~2 m away, head to feet in frame',
-    checks: { torsoSwing: false, bodyLine: { sag: 0.04, pike: 0.06 } }, // ~9° sag / ~14° pike
+    checks: { torsoSwing: false, bodyLine: { sag: 0.055, pike: 0.06 } }, // ~12° sag / ~14° pike
     joint: 'elbow',
     startAngle: 160,
     endAngle: 95,

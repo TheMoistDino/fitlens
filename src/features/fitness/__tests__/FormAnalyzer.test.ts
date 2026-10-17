@@ -56,12 +56,12 @@ describe('FormAnalyzer', () => {
     expect(f.snapshot.active?.code).toBe('torso_lean');
   });
 
-  it('push-up: flags a modest sag (~10° at the hips), not just extreme ones', () => {
+  it('push-up: tolerates a slight dip (~10°) but flags a clear sag (~15°)', () => {
     const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
     frames(f, 20, { trunkAngle: 85, hipOffset: 0, phase: 'READY' });
-    frames(f, 20, { trunkAngle: 85, hipOffset: 0.02 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0.045 });
     expect(f.snapshot.active).toBeNull();
-    frames(f, 20, { trunkAngle: 85, hipOffset: 0.05 });
+    frames(f, 20, { trunkAngle: 85, hipOffset: 0.07 });
     expect(f.snapshot.active?.code).toBe('hip_sag');
     expect(f.snapshot.bones.torso).toBe('warn');
   });
@@ -132,5 +132,29 @@ describe('FormAnalyzer', () => {
     frames(f, 20, { trunkAngle: 85, hipOffset: 0, phase: 'READY' });
     frames(f, 1, { trunkAngle: 85, hipOffset: 0.2 });
     expect(f.snapshot.active).toBeNull();
+  });
+
+  it('barbell curl: side-to-side landmark jitter is not "uneven"', () => {
+    const f = new FormAnalyzer(GYM_PROFILES.bicep_curl);
+    frames(f, 30, { trunkAngle: 5, leftAngle: 150, rightAngle: 150, phase: 'READY' });
+    // Both arms move together; per-frame estimates differ by up to ±16° in alternating directions.
+    for (let i = 0; i < 60; i++) {
+      const j = i % 2 ? 16 : -16;
+      f.update({ t: 2000 + i * 33, trunkAngle: 5, leftAngle: 100 + j, rightAngle: 100 - j, phase: 'CONCENTRIC' });
+    }
+    expect(f.snapshot.active).toBeNull();
+  });
+
+  it('curl: a sustained real imbalance is still flagged', () => {
+    const f = new FormAnalyzer(GYM_PROFILES.bicep_curl);
+    frames(f, 30, { trunkAngle: 5, leftAngle: 150, rightAngle: 150, phase: 'READY' });
+    frames(f, 30, { trunkAngle: 5, leftAngle: 70, rightAngle: 100, phase: 'CONCENTRIC' });
+    expect(f.snapshot.active?.code).toBe('asymmetry');
+  });
+
+  it('squat allows quicker descents than a curl before "Control the eccentric"', () => {
+    const rep = { index: 1, startedAt: 0, endedAt: 1500, eccentricMs: 550, concentricMs: 700, pauseMs: 100, rangeOfMotion: 1, flags: [] };
+    expect(new FormAnalyzer(BODYWEIGHT_PROFILES.squat).onRepEvent({ type: 'rep', rep })).toBeNull();
+    expect(new FormAnalyzer(GYM_PROFILES.bicep_curl).onRepEvent({ type: 'rep', rep })?.code).toBe('fast_eccentric');
   });
 });

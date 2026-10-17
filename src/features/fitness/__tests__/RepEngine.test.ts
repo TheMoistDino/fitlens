@@ -144,6 +144,15 @@ describe('RepEngine', () => {
       for (const r of reps) expect(r.eccentricMs).toBeGreaterThan(1500);
     });
 
+    it('back-to-back squats at a normal pace (no pause, not fully standing) read as controlled', () => {
+      const e = new RepEngine(BODYWEIGHT_PROFILES.squat);
+      // 1.2 s down, straight back up to ~160° (not quite full lockout), immediately into the next rep.
+      const rep: Array<[number, number]> = [[95, 1.2], [160, 1]];
+      const reps = noisy(e, 170, [[170, 1], ...rep, ...rep, ...rep, ...rep, [170, 1]]);
+      expect(reps.length).toBeGreaterThanOrEqual(3);
+      for (const r of reps) expect(r.eccentricMs).toBeGreaterThan(900);
+    });
+
     it('a genuinely dropped rep is still measured as fast', () => {
       const e = new RepEngine(BODYWEIGHT_PROFILES.squat);
       const reps = noisy(e, 170, [[170, 1], [95, 0.35], [95, 0.3], [170, 1], [170, 0.6]]);
