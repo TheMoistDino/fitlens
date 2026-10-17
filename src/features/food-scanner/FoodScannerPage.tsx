@@ -19,9 +19,16 @@ export default function FoodScannerPage() {
           <h1 className="text-xl font-bold">WebAR Macro Tracker</h1>
           <p className="text-sm text-neutral-400">Point at your plate, then tap Analyze</p>
         </div>
-        <Badge tone={scan.detectorReady ? 'good' : scan.detectorReady === false ? 'warn' : 'neutral'}>
-          Local detector: {scan.detectorReady === null ? 'loading' : scan.detectorReady ? 'ready' : 'off'}
-        </Badge>
+        <div className="flex items-center gap-2">
+          {scan.stabilityDetected && (
+            <Badge tone="good">
+              Frame Stable
+            </Badge>
+          )}
+          <Badge tone={scan.detectorReady ? 'good' : scan.detectorReady === false ? 'warn' : 'neutral'}>
+            Local detector: {scan.detectorReady === null ? 'loading' : scan.detectorReady ? 'ready' : 'off'}
+          </Badge>
+        </div>
       </header>
 
       <CameraViewport videoRef={camera.videoRef} status={camera.status} error={camera.error} mirror={mirror} onRetry={() => void camera.start()}>
@@ -49,12 +56,22 @@ export default function FoodScannerPage() {
             <StatPill label="Fat" value={`${Math.round(totals.f)}g`} />
           </div>
           <ul className="divide-y divide-neutral-800 text-sm">
-            {m.items.map((i) => (
-              <li key={i.name} className="flex justify-between py-1.5">
-                <span>{i.name}</span>
-                <span className="tabular-nums text-neutral-400">{Math.round(i.kcal)} kcal</span>
-              </li>
-            ))}
+            {m.items.map((i, idx) => {
+              const detailed = scan.detailedItems[idx];
+              return (
+                <li key={`${i.name}-${idx}`} className="flex items-center justify-between py-1.5">
+                  <div>
+                    <span className="font-medium">{i.name}</span>
+                    {detailed && (
+                      <span className="ml-2 text-xs text-neutral-400">
+                        {detailed.estimatedWeightGrams}g · {Math.round(detailed.confidenceScore * 100)}% conf
+                      </span>
+                    )}
+                  </div>
+                  <span className="tabular-nums text-neutral-400">{Math.round(i.kcal)} kcal</span>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       )}

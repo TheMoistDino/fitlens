@@ -53,16 +53,41 @@ const AnalyzeBody = z.object({
   context: z.string().max(500).optional(),
 });
 
+const FoodItemSchema = z.object({
+  name: z.string().optional(),
+  foodItem: z.string().optional(),
+  kcal: z.coerce.number().optional(),
+  calories: z.coerce.number().optional(),
+  protein: z.coerce.number().optional(),
+  carbs: z.coerce.number().optional(),
+  fat: z.coerce.number().optional(),
+  macros: z.object({ protein: z.coerce.number(), carbs: z.coerce.number(), fat: z.coerce.number() }).optional(),
+  estimatedWeightGrams: z.coerce.number().optional(),
+  confidence: z.coerce.number().optional(),
+  confidenceScore: z.coerce.number().optional(),
+}).transform((item) => {
+  const name = item.foodItem ?? item.name ?? 'Food Item';
+  const foodItem = item.foodItem ?? item.name ?? 'Food Item';
+  const kcal = item.calories ?? item.kcal ?? 100;
+  const calories = item.calories ?? item.kcal ?? 100;
+  const protein = item.macros?.protein ?? item.protein ?? 5;
+  const carbs = item.macros?.carbs ?? item.carbs ?? 10;
+  const fat = item.macros?.fat ?? item.fat ?? 2;
+  const macros = item.macros ?? { protein, carbs, fat };
+  const estimatedWeightGrams = item.estimatedWeightGrams ?? 120;
+  const confidence = item.confidenceScore ?? item.confidence ?? 0.8;
+  const confidenceScore = item.confidenceScore ?? item.confidence ?? 0.8;
+  return { name, foodItem, kcal, calories, protein, carbs, fat, macros, estimatedWeightGrams, confidence, confidenceScore };
+});
+
 const FoodItems = z.object({
-  items: z
-    .array(z.object({ name: z.string(), kcal: z.coerce.number(), protein: z.coerce.number(), carbs: z.coerce.number(), fat: z.coerce.number(), confidence: z.coerce.number().optional() }))
-    .max(10),
+  items: z.array(FoodItemSchema).max(10),
 });
 const PoseNotes = z.object({ formNotes: z.string() });
 
 const PROMPTS = {
   food: `You are a nutrition vision model. Identify each distinct food item in the photo and estimate its portion.
-Reply ONLY with JSON: {"items":[{"name":string,"kcal":number,"protein":number,"carbs":number,"fat":number,"confidence":number 0-1}]}.
+Reply ONLY with JSON: {"items":[{"foodItem":string,"name":string,"estimatedWeightGrams":number,"calories":number,"kcal":number,"macros":{"protein":number,"carbs":number,"fat":number},"protein":number,"carbs":number,"fat":number,"confidenceScore":number 0-1}]}.
 Grams for macros. Return {"items":[]} if no food is visible.`,
   pose: `You are a strength coach looking at one frame of a user exercising.
 Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cues (max 25 words). Be encouraging.`,
@@ -70,9 +95,9 @@ Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cue
 
 const MOCK_FOOD = {
   items: [
-    { name: 'Grilled chicken', kcal: 280, protein: 52, carbs: 0, fat: 6, confidence: 0.6 },
-    { name: 'White rice', kcal: 205, protein: 4, carbs: 45, fat: 0.4, confidence: 0.6 },
-    { name: 'Broccoli', kcal: 55, protein: 4, carbs: 11, fat: 0.6, confidence: 0.6 },
+    { foodItem: 'Grilled chicken', name: 'Grilled chicken', estimatedWeightGrams: 180, calories: 280, kcal: 280, protein: 52, carbs: 0, fat: 6, macros: { protein: 52, carbs: 0, fat: 6 }, confidenceScore: 0.85, confidence: 0.85 },
+    { foodItem: 'White rice', name: 'White rice', estimatedWeightGrams: 150, calories: 205, kcal: 205, protein: 4, carbs: 45, fat: 0.4, macros: { protein: 4, carbs: 45, fat: 0.4 }, confidenceScore: 0.85, confidence: 0.85 },
+    { foodItem: 'Broccoli', name: 'Broccoli', estimatedWeightGrams: 100, calories: 55, kcal: 55, protein: 4, carbs: 11, fat: 0.6, macros: { protein: 4, carbs: 11, fat: 0.6 }, confidenceScore: 0.85, confidence: 0.85 },
   ],
 };
 
