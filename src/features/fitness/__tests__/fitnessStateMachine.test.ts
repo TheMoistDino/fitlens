@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { FitnessStore, initialFitnessContext, transition } from '../fitnessStateMachine';
 import type { SetSummary } from '../types';
 
-const summary = { id: 's1', machine: 'lat_pulldown', reps: 10 } as SetSummary;
+const summary = { id: 's1', exercise: 'lat_pulldown', reps: 10 } as SetSummary;
 
 describe('fitness FSM', () => {
   it('walks the happy path IDLE → SCAN_MACHINE → SCAN_WEIGHT → ACTIVE_SET → SET_SUMMARY', () => {

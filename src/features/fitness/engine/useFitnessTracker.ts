@@ -1,36 +1,62 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { env } from '@/config/env';
 import { sponsorBus } from '@/lib/sponsors';
+import { captureKeyframe } from '@/services/camera/captureKeyframe';
 import { sessionLog } from '@/features/dashboard/useSessionLog';
 import { LM } from '@/ml/pose/geometry';
 import type { PoseLandmarkerService } from '@/ml/pose/PoseLandmarkerService';
-import { jointAngle, trunkAngleFromVertical } from '../math/vector3';
+import { angleBetween, jointAngle, sub, trunkAngleFromVertical, UP } from '../math/vector3';
 import { RepEngine } from './RepEngine';
 import { FormAnalyzer } from './FormAnalyzer';
 import { CueDispatcher } from '../feedback/cues';
-import type { FormCue, FormSnapshot, MachineProfile, PoseFrame, RepEngineSnapshot, RepPhase, SetSummary, Vec3, WeightUnit } from '../types';
+import type { FormCue, FormSnapshot, ExerciseProfile, PoseFrame, RepEngineSnapshot, RepPhase, SetSummary, Vec3, WeightUnit } from '../types';
 
-const MIN_VISIBILITY = 0.5;
+/** Front view: both sides must be clearly visible to be averaged. */
+const MIN_VISIBILITY_FRONT = 0.5;
+/** Side view: only the near side is used; allow a bit lower confidence (pads/handles occlude joints). */
+const MIN_VISIBILITY_SIDE = 0.35;
+/** Only switch tracked side when the other side is clearly more visible (prevents frame-to-frame flips). */
+const SIDE_SWITCH_MARGIN = 0.6;
 /** After this long without a usable pose, smoothing resets so a stale angle can't complete a rep. */
 const LOST_TRACKING_MS = 800;
+
+type Side = 'left' | 'right';
 
 const JOINTS = {
   elbow: { left: [LM.leftShoulder, LM.leftElbow, LM.leftWrist], right: [LM.rightShoulder, LM.rightElbow, LM.rightWrist] },
   knee: { left: [LM.leftHip, LM.leftKnee, LM.leftAnkle], right: [LM.rightHip, LM.rightKnee, LM.rightAnkle] },
 } as const;
 
-function sideAngle(frame: PoseFrame, ids: readonly [number, number, number]): number | null {
+const BODY_LINE = {
+  left: [LM.leftShoulder, LM.leftHip, LM.leftAnkle],
+  right: [LM.rightShoulder, LM.rightHip, LM.rightAnkle],
+} as const;
+
+const vis = (frame: PoseFrame, i: number) => frame.image[i]?.visibility ?? 0;
+
+function angleAt(frame: PoseFrame, ids: readonly [number, number, number], minVis: number): number | null {
+  // Visibility lives on the image landmarks; geometry comes from metric world landmarks.
+  if (ids.some((i) => vis(frame, i) < minVis)) return null;
   const [a, b, c] = ids;
-  // Visibility lives on the image landmarks; geometry comes from world landmarks.
-  if (ids.some((i) => (frame.image[i]?.visibility ?? 0) < MIN_VISIBILITY)) return null;
   const A = frame.world[a], B = frame.world[b], C = frame.world[c];
   if (!A || !B || !C) return null;
   const deg = jointAngle(A, B, C);
   return Number.isFinite(deg) ? deg : null;
 }
 
-function trunkAngle(frame: PoseFrame): number {
+function sideScore(frame: PoseFrame, ids: readonly number[]): number {
+  return ids.reduce((s, i) => s + vis(frame, i), 0);
+}
+
+/** Trunk angle from vertical: both-side midline in front view, near-side shoulder→hip in side view. */
+function trunkAngle(frame: PoseFrame, side: Side | null): number {
   const w = frame.world;
+  if (side) {
+    const s = w[side === 'left' ? LM.leftShoulder : LM.rightShoulder];
+    const h = w[side === 'left' ? LM.leftHip : LM.rightHip];
+    return s && h ? angleBetween(sub(s, h), UP) : NaN;
+  }
   const ls = w[LM.leftShoulder], rs = w[LM.rightShoulder], lh = w[LM.leftHip], rh = w[LM.rightHip];
   return ls && rs && lh && rh ? trunkAngleFromVertical(ls, rs, lh, rh) : NaN;
 }
@@ -55,11 +81,13 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
   const repRef = useRef<RepEngineSnapshot | null>(null);
   const engineRef = useRef<RepEngine | null>(null);
   const formAnalyzerRef = useRef<FormAnalyzer | null>(null);
-  const profileRef = useRef<MachineProfile | null>(null);
+  const profileRef = useRef<ExerciseProfile | null>(null);
   const startedAtRef = useRef(0);
   const lastSeenRef = useRef(0);
   const cuesRef = useRef(new CueDispatcher());
   const lastAlertCodeRef = useRef<string | null>(null);
+  const sideRef = useRef<Side>('left');
+  const lastKeyframeRef = useRef(0);
 
   const [ui, setUi] = useState<TrackerUi>({ repCount: 0, phase: 'READY', cue: null, partialReps: 0 });
 
@@ -68,13 +96,14 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
     return () => cues.dispose();
   }, []);
 
-  const start = useCallback((profile: MachineProfile, t: number) => {
+  const start = useCallback((profile: ExerciseProfile, t: number) => {
     profileRef.current = profile;
     engineRef.current = new RepEngine(profile);
     formAnalyzerRef.current = new FormAnalyzer(profile);
     startedAtRef.current = t;
     lastSeenRef.current = t;
     lastAlertCodeRef.current = null;
+    lastKeyframeRef.current = t; // first coaching keyframe after one interval
     poseRef.current = null;
     cuesRef.current.unlock(); // called from the Start click → audio allowed
     setUi({ repCount: 0, phase: 'READY', cue: null, partialReps: 0 });
@@ -99,13 +128,48 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
       if (!engine || !form || !profile) return;
 
       const joint = JOINTS[profile.joint];
-      const left = sideAngle(frame, joint.left);
-      const right = sideAngle(frame, joint.right);
-      const combined = left !== null && right !== null ? (left + right) / 2 : (left ?? right);
-      if (combined === null) return;
+      let left: number | null;
+      let right: number | null;
+      let primary: number | null;
+      let trackedSide: Side | null = null;
 
-      const events = engine.update(combined, now);
-      const snap = form.update({ t: now, trunkAngle: trunkAngle(frame), leftAngle: left, rightAngle: right, phase: engine.snapshot.phase });
+      if (profile.cameraView === 'side') {
+        // Side view: the far side is occluded and mostly hallucinated — use only the near side.
+        const scoreL = sideScore(frame, joint.left), scoreR = sideScore(frame, joint.right);
+        const current = sideRef.current;
+        const other: Side = current === 'left' ? 'right' : 'left';
+        if ((other === 'left' ? scoreL : scoreR) > (current === 'left' ? scoreL : scoreR) + SIDE_SWITCH_MARGIN) sideRef.current = other;
+        trackedSide = sideRef.current;
+        primary = angleAt(frame, joint[trackedSide], MIN_VISIBILITY_SIDE);
+        left = trackedSide === 'left' ? primary : null;
+        right = trackedSide === 'right' ? primary : null;
+      } else {
+        left = angleAt(frame, joint.left, MIN_VISIBILITY_FRONT);
+        right = angleAt(frame, joint.right, MIN_VISIBILITY_FRONT);
+        primary = left !== null && right !== null ? (left + right) / 2 : (left ?? right);
+      }
+      if (primary === null) return;
+
+      const lineSide: Side = trackedSide ?? (sideScore(frame, BODY_LINE.left) >= sideScore(frame, BODY_LINE.right) ? 'left' : 'right');
+      const hipLineAngle = profile.checks.minHipLineDeg !== undefined ? angleAt(frame, BODY_LINE[lineSide], MIN_VISIBILITY_SIDE) : null;
+
+      const events = engine.update(primary, now);
+      const snap = form.update({
+        t: now,
+        trunkAngle: trunkAngle(frame, trackedSide),
+        leftAngle: left,
+        rightAngle: right,
+        hipLineAngle,
+        phase: engine.snapshot.phase,
+      });
+
+      // Cold path: one keyframe every few seconds → StepFun coaching (async, off the frame budget).
+      if (now - lastKeyframeRef.current > env.stepfun.keyframeIntervalMs) {
+        lastKeyframeRef.current = now;
+        void captureKeyframe(video).then((image) => {
+          if (image) sponsorBus.emit('keyframe:captured', { image, mode: 'pose', context: `exercise=${profile.name}` });
+        });
+      }
 
       let changed = false;
       for (const e of events) {
@@ -125,7 +189,9 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
 
       // Instantaneous cues (torso, asymmetry) → haptic/audio + bus, on change only.
       const active = form.snapshot.active;
-      if (active && (active.code === 'torso_swing' || active.code === 'asymmetry')) cuesRef.current.fire(active, now);
+      if (active && (active.code === 'torso_swing' || active.code === 'torso_lean' || active.code === 'hip_sag' || active.code === 'asymmetry')) {
+        cuesRef.current.fire(active, now);
+      }
       const code = active?.code ?? null;
       if (code !== lastAlertCodeRef.current) {
         lastAlertCodeRef.current = code;
@@ -155,7 +221,7 @@ export function useFitnessTracker(pose: React.RefObject<PoseLandmarkerService | 
     const mean = (f: (r: (typeof records)[number]) => number) => +(records.reduce((s, r) => s + f(r), 0) / n / 1000).toFixed(1);
     const summary: SetSummary = {
       id: crypto.randomUUID(),
-      machine: profile.id,
+      exercise: profile.id,
       load,
       reps: records.length,
       partialReps: engine.snapshot.partialReps,

@@ -3,9 +3,11 @@
  * Pure types only, so every engine file (and the tests) can depend on this without pulling in React.
  */
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
-import type { MachineExercise, Severity, WeightUnit } from '@/core/events/events';
+import type { AnyExercise, BodyweightExercise, GymExercise, Severity, WeightUnit } from '@/core/events/events';
 
-export type { MachineExercise, WeightUnit };
+export type { BodyweightExercise, GymExercise, WeightUnit };
+/** Any exercise the rep engine can track. */
+export type TrackedExercise = AnyExercise;
 
 // ---------------------------------------------------------------- geometry
 
@@ -65,10 +67,31 @@ export interface StickPose {
   ankle: [number, number];
 }
 
-export interface MachineProfile {
-  id: MachineExercise;
+/** Where the phone should be relative to the user. */
+export type CameraView = 'front' | 'side';
+
+export interface FormChecks {
+  /** Flag trunk movement relative to the set's own baseline (momentum / swinging). */
+  torsoSwing: boolean;
+  /** Flag absolute forward lean beyond this many degrees from vertical (squat "chest up"). */
+  maxTorsoLeanDeg?: number;
+  /** Flag shoulder–hip–ankle line dropping below this angle (push-up hip sag). */
+  minHipLineDeg?: number;
+}
+
+export interface ExerciseProfile {
+  id: TrackedExercise;
   name: string;
   muscles: string;
+  /**
+   * Camera placement. 'side' = joint bends across the lens (accurate), and only the side nearest
+   * the camera is used, because the far side is occluded and mostly guessed by the model.
+   * 'front' = both sides visible, averaged, and checked for left/right asymmetry.
+   */
+  cameraView: CameraView;
+  /** One-line setup instruction shown before and during the set. */
+  setupHint: string;
+  checks: FormChecks;
   /** Joint whose angle drives rep counting. */
   joint: JointName;
   /** Angle (deg) at the start/rest position of a rep. */
@@ -121,7 +144,7 @@ export type RepEngineEvent =
   | { type: 'rep'; rep: RepRecord }
   | { type: 'partial'; at: 'start' | 'end'; t: number };
 
-export type FormFlagCode = 'torso_swing' | 'asymmetry' | 'fast_eccentric' | 'short_rom_end' | 'short_rom_start' | 'lost_tracking';
+export type FormFlagCode = 'torso_swing' | 'torso_lean' | 'hip_sag' | 'asymmetry' | 'fast_eccentric' | 'short_rom_end' | 'short_rom_start';
 
 export interface FormCue {
   code: FormFlagCode;
@@ -143,7 +166,7 @@ export interface FormSnapshot {
 
 export interface SetSummary {
   id: string;
-  machine: MachineExercise;
+  exercise: TrackedExercise;
   load: { value: number; unit: WeightUnit } | null;
   reps: number;
   partialReps: number;
@@ -169,7 +192,7 @@ export interface FitnessContext {
    * events with the epoch they started in; events from an older epoch are dropped.
    */
   epoch: number;
-  machine: MachineExercise | null;
+  machine: GymExercise | null;
   machineBox: NormRect | null;
   machineConfidence: number;
   load: { value: number; unit: WeightUnit; source: 'ocr' | 'manual' } | null;
@@ -179,8 +202,8 @@ export interface FitnessContext {
 
 export type FitnessEvent =
   | { type: 'START_MACHINE_SCAN' }
-  | { type: 'MACHINE_DETECTED'; epoch: number; machine: MachineExercise; confidence: number; box: NormRect | null }
-  | { type: 'MACHINE_SELECTED'; machine: MachineExercise }
+  | { type: 'MACHINE_DETECTED'; epoch: number; machine: GymExercise; confidence: number; box: NormRect | null }
+  | { type: 'MACHINE_SELECTED'; machine: GymExercise }
   | { type: 'CONFIRM_MACHINE' }
   | { type: 'WEIGHT_LOCKED'; epoch: number; value: number; unit: WeightUnit }
   | { type: 'WEIGHT_SET_MANUAL'; value: number; unit: WeightUnit }

@@ -4,7 +4,7 @@ import { CameraViewport } from '@/ui/CameraViewport';
 import { Badge, Button, Card } from '@/ui/primitives';
 import { PoseLandmarkerService } from '@/ml/pose/PoseLandmarkerService';
 import { fitnessStore, useFitnessState } from './fitnessStateMachine';
-import { MACHINE_LIST, MACHINE_PROFILES } from './exercises/machineProfiles';
+import { GYM_LIST, GYM_PROFILES } from './exercises/exerciseProfiles';
 import { useMachineScanner } from './machine/useMachineScanner';
 import { useWeightScanner, WEIGHT_ROI } from './ocr/useWeightScanner';
 import { useFitnessTracker } from './engine/useFitnessTracker';
@@ -12,6 +12,7 @@ import { FitnessHUD } from './components/FitnessHUD';
 import { MachinePipCard, MachineTarget } from './components/MachineScanOverlay';
 import { WeightAdjuster, WeightRoiOverlay } from './components/WeightScanOverlay';
 import { SetSummaryCard } from './components/SetSummaryCard';
+import { SetupHint } from './components/SetupHint';
 import type { FitnessMode, WeightUnit } from './types';
 
 const MODE_LABEL: Record<FitnessMode, string> = {
@@ -28,7 +29,7 @@ const facingFor = (mode: FitnessMode): 'user' | 'environment' => (mode === 'ACTI
 export default function FitnessPage() {
   const state = useFitnessState();
   const { mode } = state;
-  const profile = state.machine ? MACHINE_PROFILES[state.machine] : null;
+  const profile = state.machine ? GYM_PROFILES[state.machine] : null;
   const [unit, setUnit] = useState<WeightUnit>('lb');
 
   // --- on-device pose model (shared by the tracker)
@@ -104,7 +105,7 @@ export default function FitnessPage() {
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-xl font-bold">Gym Coach</h1>
-          <p className="text-sm text-neutral-400">Scan a machine, lock the weight, and get live rep counting and form cues</p>
+          <p className="text-sm text-neutral-400">Scan a machine or dumbbells, lock the weight, and get live rep counting and form cues</p>
         </div>
         <div className="flex gap-2">
           <Badge tone={mode === 'ACTIVE_SET' ? 'good' : 'neutral'}>{MODE_LABEL[mode]}</Badge>
@@ -148,7 +149,7 @@ export default function FitnessPage() {
         <Card title="Start">
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => fitnessStore.send({ type: 'START_MACHINE_SCAN' })}>Scan a machine</Button>
-            {MACHINE_LIST.map((m) => (
+            {GYM_LIST.map((m) => (
               <Button key={m.id} variant="secondary" onClick={() => fitnessStore.send({ type: 'MACHINE_SELECTED', machine: m.id })}>
                 {m.name}
               </Button>
@@ -160,7 +161,7 @@ export default function FitnessPage() {
       {mode === 'SCAN_MACHINE' && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm text-neutral-400">Or pick it yourself:</span>
-          {MACHINE_LIST.map((m) => (
+          {GYM_LIST.map((m) => (
             <Button key={m.id} variant="secondary" onClick={() => fitnessStore.send({ type: 'MACHINE_SELECTED', machine: m.id })}>
               {m.name}
             </Button>
@@ -183,6 +184,8 @@ export default function FitnessPage() {
             }}
             onRescan={weight.rescan}
           />
+          <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-neutral-500">Before you start — position the phone</p>
+          <SetupHint profile={profile} />
           <div className="mt-4 flex items-center gap-3">
             <Button onClick={startSet} disabled={poseStatus !== 'ready' || camera.status !== 'streaming'}>
               Start set
@@ -196,7 +199,7 @@ export default function FitnessPage() {
       {mode === 'ACTIVE_SET' && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-sm text-neutral-400">
-            {tracker.ui.partialReps > 0 ? `${tracker.ui.partialReps} partial rep(s) not counted` : 'Face the camera, full body or upper body in frame'}
+            {tracker.ui.partialReps > 0 ? `${tracker.ui.partialReps} partial rep(s) not counted` : profile?.setupHint}
           </span>
           <Button variant="danger" onClick={endSet}>End set</Button>
         </div>

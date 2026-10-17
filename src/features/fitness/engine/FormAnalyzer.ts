@@ -1,20 +1,26 @@
 import { createEma } from '../math/vector3';
-import type { BoneGroup, BoneStatus, FormCue, FormFlagCode, FormSnapshot, MachineProfile, RepEngineEvent, RepPhase } from '../types';
+import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, FormSnapshot, RepEngineEvent, RepPhase } from '../types';
 
 /**
- * Dynamic form heuristics, evaluated per frame:
- *  - torso swing: trunk deviation from the set's own baseline > 15° (warn) / > 25° (bad)
- *  - bilateral asymmetry: |left − right| primary joint angle > 12°, sustained (warn)
- * and per rep (from RepEngine events):
+ * Dynamic form heuristics. Which checks run is decided per exercise (`profile.checks`), because a
+ * fault on one lift is correct technique on another (squats *should* lean forward).
+ *
+ * Per frame:
+ *  - torso swing (checks.torsoSwing): trunk deviation from the set's own baseline > 15° / > 25°
+ *  - torso lean (checks.maxTorsoLeanDeg): absolute trunk angle from vertical over the limit
+ *  - hip sag (checks.minHipLineDeg): shoulder–hip–ankle line bent below the limit
+ *  - bilateral asymmetry (front view only): |left − right| primary joint angle > 12°, sustained
+ * Per rep (from RepEngine events):
  *  - eccentric faster than half the target tempo → "Control the eccentric"
  *  - short range at either end → the profile's cue
  *
- * Using a per-set baseline for the trunk makes the check independent of how the phone is tilted.
+ * Every per-frame fault must persist for a few frames before it shows, so one bad landmark frame
+ * can't flash a cue.
  */
 export const TORSO_WARN_DEG = 15;
 export const TORSO_BAD_DEG = 25;
 export const ASYMMETRY_DEG = 12;
-const ASYMMETRY_FRAMES = 6;
+const SUSTAIN_FRAMES = 6;
 const BASELINE_FRAMES = 15;
 /** How long an event-driven cue (fast eccentric, short ROM) stays on screen. */
 const EVENT_CUE_MS = 2500;
@@ -23,17 +29,34 @@ const SEVERITY_RANK = { info: 0, warn: 1, critical: 2 } as const;
 
 export interface FormFrameInput {
   t: number;
+  /** Trunk angle from vertical (deg). */
   trunkAngle: number;
   leftAngle: number | null;
   rightAngle: number | null;
+  /** Shoulder–hip–ankle angle on the tracked side (deg), when visible. */
+  hipLineAngle?: number | null;
   phase: RepPhase;
+}
+
+/** Counts consecutive frames a condition holds. */
+class Streak {
+  private n = 0;
+  update(on: boolean): boolean {
+    this.n = on ? this.n + 1 : 0;
+    return this.n >= SUSTAIN_FRAMES;
+  }
 }
 
 export class FormAnalyzer {
   private baselineSamples: number[] = [];
   private baseline: number | null = null;
   private torsoEma = createEma(0.3);
-  private asymStreak = 0;
+  private leanEma = createEma(0.3);
+  private hipEma = createEma(0.3);
+  private swing = new Streak();
+  private lean = new Streak();
+  private sag = new Streak();
+  private asym = new Streak();
   private eventCue: { cue: FormCue; until: number } | null = null;
   private repFlags = new Set<FormFlagCode>();
   private counts: Partial<Record<FormFlagCode, number>> = {};
@@ -45,7 +68,7 @@ export class FormAnalyzer {
     active: null,
   };
 
-  constructor(private readonly profile: MachineProfile) {}
+  constructor(private readonly profile: ExerciseProfile) {}
 
   get snapshot(): FormSnapshot {
     return this.snap;
@@ -62,8 +85,14 @@ export class FormAnalyzer {
     return flags;
   }
 
-  update({ t, trunkAngle, leftAngle, rightAngle, phase }: FormFrameInput): FormSnapshot {
-    // --- torso baseline (first frames of the set, while the user is settled)
+  update({ t, trunkAngle, leftAngle, rightAngle, hipLineAngle, phase }: FormFrameInput): FormSnapshot {
+    const { checks, cameraView } = this.profile;
+    const moving = phase !== 'READY';
+    const frameCues: FormCue[] = [];
+    let torso: BoneStatus = 'good';
+    let legs: BoneStatus = 'good';
+
+    // --- torso swing vs. per-set baseline (independent of phone tilt)
     if (this.baseline === null && Number.isFinite(trunkAngle)) {
       this.baselineSamples.push(trunkAngle);
       if (this.baselineSamples.length >= BASELINE_FRAMES) {
@@ -72,35 +101,47 @@ export class FormAnalyzer {
     }
     const torsoDeviation =
       this.baseline !== null && Number.isFinite(trunkAngle) ? this.torsoEma.next(Math.abs(trunkAngle - this.baseline)) : 0;
-
-    // --- bilateral asymmetry (only while moving: at rest people often hold the handles unevenly)
-    const asymmetry = leftAngle !== null && rightAngle !== null ? Math.abs(leftAngle - rightAngle) : null;
-    const moving = phase !== 'READY';
-    this.asymStreak = moving && asymmetry !== null && asymmetry > ASYMMETRY_DEG ? this.asymStreak + 1 : 0;
-    const asymActive = this.asymStreak >= ASYMMETRY_FRAMES;
-
-    // --- per-frame cues
-    const frameCues: FormCue[] = [];
-    if (torsoDeviation > TORSO_WARN_DEG) {
-      frameCues.push({
-        code: 'torso_swing',
-        message: torsoDeviation > TORSO_BAD_DEG ? 'Stop swinging — stay tall' : 'Control the momentum — torso still',
-        severity: torsoDeviation > TORSO_BAD_DEG ? 'critical' : 'warn',
-      });
+    if (checks.torsoSwing && this.swing.update(torsoDeviation > TORSO_WARN_DEG)) {
+      const bad = torsoDeviation > TORSO_BAD_DEG;
+      frameCues.push({ code: 'torso_swing', message: bad ? 'Stop swinging — stay tall' : 'Control the momentum — torso still', severity: bad ? 'critical' : 'warn' });
+      torso = bad ? 'bad' : 'warn';
     }
+
+    // --- absolute forward lean (squat)
+    if (checks.maxTorsoLeanDeg !== undefined && Number.isFinite(trunkAngle)) {
+      const lean = this.leanEma.next(trunkAngle);
+      if (this.lean.update(moving && lean > checks.maxTorsoLeanDeg)) {
+        frameCues.push({ code: 'torso_lean', message: 'Chest up — you’re folding forward', severity: 'warn' });
+        torso = 'warn';
+      }
+    }
+
+    // --- hip line (push-up sag / pike)
+    if (checks.minHipLineDeg !== undefined && hipLineAngle != null && Number.isFinite(hipLineAngle)) {
+      const line = this.hipEma.next(hipLineAngle);
+      if (this.sag.update(line < checks.minHipLineDeg)) {
+        frameCues.push({ code: 'hip_sag', message: 'Keep hips in line with shoulders', severity: 'warn' });
+        torso = 'warn';
+        legs = 'warn';
+      }
+    }
+
+    // --- bilateral asymmetry: only meaningful when both sides are actually visible (front view),
+    // and only while moving (at rest people often hold handles unevenly).
+    const asymmetry = cameraView === 'front' && leftAngle !== null && rightAngle !== null ? Math.abs(leftAngle - rightAngle) : null;
+    const asymActive = this.asym.update(moving && asymmetry !== null && asymmetry > ASYMMETRY_DEG);
     if (asymActive) frameCues.push({ code: 'asymmetry', message: 'Uneven sides — keep both even', severity: 'warn' });
 
     this.trackRisingEdges(new Set(frameCues.map((c) => c.code)));
 
     // --- bones
     const limb: BoneStatus = asymActive ? 'warn' : 'good';
-    const torso: BoneStatus = torsoDeviation > TORSO_BAD_DEG ? 'bad' : torsoDeviation > TORSO_WARN_DEG ? 'warn' : 'good';
     const bones: Record<BoneGroup, BoneStatus> =
       this.profile.joint === 'knee'
-        ? { torso, leftArm: 'good', rightArm: 'good', leftLeg: limb, rightLeg: limb }
-        : { torso, leftArm: limb, rightArm: limb, leftLeg: 'good', rightLeg: 'good' };
+        ? { torso, leftArm: 'good', rightArm: 'good', leftLeg: limb === 'good' ? legs : limb, rightLeg: limb === 'good' ? legs : limb }
+        : { torso, leftArm: limb, rightArm: limb, leftLeg: legs, rightLeg: legs };
 
-    // --- pick the most severe cue (event cues stay visible for a moment)
+    // --- most severe cue wins (event cues stay visible for a moment)
     if (this.eventCue && t > this.eventCue.until) this.eventCue = null;
     const candidates = this.eventCue ? [...frameCues, this.eventCue.cue] : frameCues;
     const active = candidates.reduce<FormCue | null>((best, c) => (!best || SEVERITY_RANK[c.severity] > SEVERITY_RANK[best.severity] ? c : best), null);

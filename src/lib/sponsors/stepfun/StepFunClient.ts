@@ -34,7 +34,7 @@ const PoseResponseSchema = z.object({
 const MachineResponseSchema = z.object({
   mode: z.literal('machine'),
   source: z.enum(['stepfun', 'mock']),
-  machine: z.enum(['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'unknown']),
+  machine: z.enum(['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'bicep_curl', 'unknown']),
   confidence: z.number().min(0).max(1),
   box: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).optional(),
 });

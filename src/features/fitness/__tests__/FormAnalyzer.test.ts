@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { FormAnalyzer } from '../engine/FormAnalyzer';
-import { MACHINE_PROFILES } from '../exercises/machineProfiles';
+import { BODYWEIGHT_PROFILES, GYM_PROFILES } from '../exercises/exerciseProfiles';
 
-const profile = MACHINE_PROFILES.lat_pulldown;
+const profile = GYM_PROFILES.lat_pulldown;
 
 function settle(f: FormAnalyzer, trunk = 5) {
   for (let i = 0; i < 20; i++) f.update({ t: i * 33, trunkAngle: trunk, leftAngle: 160, rightAngle: 160, phase: 'READY' });
@@ -41,7 +41,49 @@ describe('FormAnalyzer', () => {
   });
 
   it('uses the machine-specific cue for a short range of motion', () => {
-    const f = new FormAnalyzer(MACHINE_PROFILES.leg_extension);
+    const f = new FormAnalyzer(GYM_PROFILES.leg_extension);
     expect(f.onRepEvent({ type: 'partial', at: 'end', t: 0 })?.message).toBe('Full extension at top');
+  });
+
+  const frames = (f: FormAnalyzer, n: number, input: Partial<Parameters<FormAnalyzer['update']>[0]>) => {
+    for (let i = 0; i < n; i++) f.update({ t: i * 33, trunkAngle: 10, leftAngle: 150, rightAngle: null, phase: 'ECCENTRIC', ...input });
+  };
+
+  it('squat: natural forward lean is fine, folding over is flagged', () => {
+    const f = new FormAnalyzer(BODYWEIGHT_PROFILES.squat);
+    frames(f, 30, { trunkAngle: 40 }); // big change from standing baseline, but normal squat lean
+    expect(f.snapshot.active).toBeNull();
+    frames(f, 30, { trunkAngle: 70 });
+    expect(f.snapshot.active?.code).toBe('torso_lean');
+  });
+
+  it('push-up: flags sagging hips from the shoulder–hip–ankle line', () => {
+    const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
+    frames(f, 20, { trunkAngle: 85, hipLineAngle: 172 });
+    expect(f.snapshot.active).toBeNull();
+    frames(f, 20, { trunkAngle: 85, hipLineAngle: 140 });
+    expect(f.snapshot.active?.code).toBe('hip_sag');
+    expect(f.snapshot.bones.torso).toBe('warn');
+  });
+
+  it('side-view exercises never report asymmetry (far side is not trustworthy)', () => {
+    const f = new FormAnalyzer(GYM_PROFILES.leg_extension);
+    frames(f, 30, { leftAngle: 160, rightAngle: 100 });
+    expect(f.snapshot.asymmetry).toBeNull();
+    expect(f.snapshot.active).toBeNull();
+  });
+
+  it('leg extension does not flag torso swing', () => {
+    const f = new FormAnalyzer(GYM_PROFILES.leg_extension);
+    frames(f, 20, { trunkAngle: 10 });
+    frames(f, 20, { trunkAngle: 45 });
+    expect(f.snapshot.active).toBeNull();
+  });
+
+  it('a single bad frame does not flash a cue', () => {
+    const f = new FormAnalyzer(BODYWEIGHT_PROFILES.pushup);
+    frames(f, 20, { trunkAngle: 85, hipLineAngle: 172 });
+    frames(f, 1, { trunkAngle: 85, hipLineAngle: 120 });
+    expect(f.snapshot.active).toBeNull();
   });
 });

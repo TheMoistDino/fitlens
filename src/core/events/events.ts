@@ -3,10 +3,11 @@
  * (sponsor plugins, HUD) only ever agree on this file — never on each other.
  */
 
-export type ExerciseKind = 'squat' | 'curl' | 'pushup';
-/** Gym machines tracked by the fitness engine (src/features/fitness). */
-export type MachineExercise = 'lat_pulldown' | 'chest_press' | 'seated_row' | 'leg_extension';
-export type AnyExercise = ExerciseKind | MachineExercise;
+/** Bodyweight exercises (Bodyweight page). */
+export type BodyweightExercise = 'squat' | 'pushup';
+/** Gym exercises (Gym Coach page): machines plus free-weight curls. */
+export type GymExercise = 'lat_pulldown' | 'chest_press' | 'seated_row' | 'leg_extension' | 'bicep_curl';
+export type AnyExercise = BodyweightExercise | GymExercise;
 export type WeightUnit = 'lb' | 'kg';
 export type Severity = 'info' | 'warn' | 'critical';
 
@@ -67,7 +68,7 @@ export type SponsorEventMap = {
   /** Gym machine classification for a `machine` keyframe (echoes its requestId). */
   'machine:result': {
     requestId?: number;
-    machine: MachineExercise | 'unknown';
+    machine: GymExercise | 'unknown';
     confidence: number;
     /** Normalised [0..1] box around the machine, when the model returned one. */
     box?: { x: number; y: number; w: number; h: number };

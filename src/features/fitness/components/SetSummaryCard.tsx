@@ -1,18 +1,19 @@
 import { Card, StatPill } from '@/ui/primitives';
-import { MACHINE_PROFILES } from '../exercises/machineProfiles';
+import { EXERCISE_PROFILES } from '../exercises/exerciseProfiles';
 import type { FormFlagCode, SetSummary } from '../types';
 
 const FLAG_LABEL: Record<FormFlagCode, string> = {
   torso_swing: 'Torso swing',
+  torso_lean: 'Leaning forward',
+  hip_sag: 'Hips out of line',
   asymmetry: 'Uneven sides',
   fast_eccentric: 'Rushed eccentric',
   short_rom_end: 'Short range (end)',
   short_rom_start: 'Short range (start)',
-  lost_tracking: 'Lost tracking',
 };
 
 export function SetSummaryCard({ summary }: { summary: SetSummary }) {
-  const profile = MACHINE_PROFILES[summary.machine];
+  const profile = EXERCISE_PROFILES[summary.exercise];
   const flags = Object.entries(summary.formFlags) as Array<[FormFlagCode, number]>;
   const secs = Math.round(summary.durationMs / 1000);
   return (

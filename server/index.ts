@@ -59,7 +59,7 @@ const FoodItems = z.object({
     .max(10),
 });
 const PoseNotes = z.object({ formNotes: z.string() });
-const MACHINES = ['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'unknown'] as const;
+const MACHINES = ['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'bicep_curl', 'unknown'] as const;
 const MachineGuess = z.object({
   machine: z.enum(MACHINES).catch('unknown'),
   confidence: z.coerce.number().min(0).max(1).catch(0),
@@ -72,8 +72,9 @@ Reply ONLY with JSON: {"items":[{"name":string,"kcal":number,"protein":number,"c
 Grams for macros. Return {"items":[]} if no food is visible.`,
   pose: `You are a strength coach looking at one frame of a user exercising.
 Reply ONLY with JSON: {"formNotes": string} — one or two short, actionable cues (max 25 words). Be encouraging.`,
-  machine: `You identify gym equipment. Classify the main machine in the photo as one of:
-lat_pulldown, chest_press, seated_row, leg_extension, unknown.
+  machine: `You identify gym equipment. Classify the main equipment in the photo as one of:
+lat_pulldown, chest_press, seated_row, leg_extension,
+bicep_curl (dumbbells, an EZ/curl bar, or a cable curl station), unknown.
 Reply ONLY with JSON: {"machine": string, "confidence": number 0-1, "box": {"x":number,"y":number,"w":number,"h":number}}
 where box is the machine's bounding box in normalised 0-1 image coordinates (x,y = top-left).`,
 };

@@ -9,6 +9,8 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
+    // Let HTTPS tunnels (cloudflared / ngrok) reach the dev server for on-phone camera testing.
+    allowedHosts: ['.trycloudflare.com', '.ngrok-free.app'],
     // Required for Sentry JS self-profiling (browserProfilingIntegration).
     headers: { 'Document-Policy': 'js-profiling' },
     // Secrets live in the Hono proxy (server/index.ts); the browser only ever hits /api.

@@ -1,5 +1,5 @@
-import type { MachineExercise, MachineProfile, NormRect } from '../types';
-import { MACHINE_LIST } from '../exercises/machineProfiles';
+import type { GymExercise, ExerciseProfile, NormRect } from '../types';
+import { GYM_LIST } from '../exercises/exerciseProfiles';
 import { ReferenceLoop } from './ReferenceLoop';
 
 const DEFAULT_BOX: NormRect = { x: 0.15, y: 0.1, w: 0.7, h: 0.8 };
@@ -38,11 +38,11 @@ export function MachinePipCard({
   onConfirm,
   onPick,
 }: {
-  profile: MachineProfile;
+  profile: ExerciseProfile;
   confidence: number;
   source: 'stepfun' | 'mock' | null;
   onConfirm: () => void;
-  onPick: (m: MachineExercise) => void;
+  onPick: (m: GymExercise) => void;
 }) {
   return (
     <div className="pointer-events-auto absolute bottom-2 right-2 max-h-[calc(100%-1rem)] w-60 overflow-auto rounded-2xl border border-neutral-700 bg-neutral-900/90 p-2 shadow-2xl backdrop-blur sm:w-72">
@@ -63,11 +63,11 @@ export function MachinePipCard({
         <select
           aria-label="Pick a different machine"
           value=""
-          onChange={(e) => e.target.value && onPick(e.target.value as MachineExercise)}
+          onChange={(e) => e.target.value && onPick(e.target.value as GymExercise)}
           className="w-full rounded-lg bg-neutral-800 px-2 py-1 text-[11px] text-neutral-300"
         >
           <option value="">Not this machine?</option>
-          {MACHINE_LIST.filter((m) => m.id !== profile.id).map((m) => (
+          {GYM_LIST.filter((m) => m.id !== profile.id).map((m) => (
             <option key={m.id} value={m.id}>
               {m.name}
             </option>

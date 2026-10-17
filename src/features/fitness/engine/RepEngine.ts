@@ -1,10 +1,10 @@
 import { createEma } from '../math/vector3';
-import type { MachineProfile, RepEngineEvent, RepEngineSnapshot, RepPhase, RepRecord } from '../types';
+import type { ExerciseProfile, RepEngineEvent, RepEngineSnapshot, RepPhase, RepRecord } from '../types';
 
 /**
  * Repetition state machine:  READY → (first phase) → INFLECTION → (second phase) → REP_COMPLETED → READY
  *
- * The first phase is ECCENTRIC or CONCENTRIC depending on the machine (see MachineProfile.firstPhase).
+ * The first phase is ECCENTRIC or CONCENTRIC depending on the machine (see ExerciseProfile.firstPhase).
  * The joint angle is normalised to `progress` (0 = start position, 1 = far end of the range) and all
  * thresholds use a ±DEADBAND_DEG band around the targets:
  *
@@ -41,7 +41,7 @@ export class RepEngine {
   private lastProgress = 0;
   private readonly d: number;
 
-  constructor(private readonly profile: MachineProfile) {
+  constructor(private readonly profile: ExerciseProfile) {
     this.d = DEADBAND_DEG / Math.abs(profile.endAngle - profile.startAngle);
   }
 

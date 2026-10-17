@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { MachineProfile, StickPose } from '../types';
+import type { ExerciseProfile, StickPose } from '../types';
 
 /**
  * Lightweight animated vector skeleton demonstrating textbook range and tempo for a machine.
@@ -27,7 +27,7 @@ function lerpPose(a: StickPose, b: StickPose, k: number): StickPose {
   return out;
 }
 
-export function ReferenceLoop({ profile, className }: { profile: MachineProfile; className?: string }) {
+export function ReferenceLoop({ profile, className }: { profile: ExerciseProfile; className?: string }) {
   const linesRef = useRef<(SVGLineElement | null)[]>([]);
   const headRef = useRef<SVGCircleElement>(null);
   const labelRef = useRef<SVGTextElement>(null);
