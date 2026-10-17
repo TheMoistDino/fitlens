@@ -2,7 +2,8 @@ import { NavLink } from 'react-router-dom';
 
 const TABS = [
   { to: '/scan', label: 'Food Scanner', icon: '🥗' },
-  { to: '/workout', label: 'Workout', icon: '🏋️' },
+  { to: '/gym', label: 'Gym Coach', icon: '🏋️' },
+  { to: '/workout', label: 'Bodyweight', icon: '🤸' },
   { to: '/dashboard', label: 'Dashboard', icon: '📊' },
 ] as const;
 

@@ -31,7 +31,15 @@ const PoseResponseSchema = z.object({
   formNotes: z.string(),
 });
 
-const AnalyzeResponseSchema = z.discriminatedUnion('mode', [FoodResponseSchema, PoseResponseSchema]);
+const MachineResponseSchema = z.object({
+  mode: z.literal('machine'),
+  source: z.enum(['stepfun', 'mock']),
+  machine: z.enum(['lat_pulldown', 'chest_press', 'seated_row', 'leg_extension', 'unknown']),
+  confidence: z.number().min(0).max(1),
+  box: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).optional(),
+});
+
+const AnalyzeResponseSchema = z.discriminatedUnion('mode', [FoodResponseSchema, PoseResponseSchema, MachineResponseSchema]);
 export type AnalyzeResponse = z.infer<typeof AnalyzeResponseSchema>;
 
 export class StepFunClient {
@@ -40,7 +48,7 @@ export class StepFunClient {
 
   constructor(private readonly endpoint = '/api/stepfun/analyze', private readonly timeoutMs = 20_000) {}
 
-  async analyzeKeyframe(image: Blob, mode: 'food' | 'pose', context?: string): Promise<Result<AnalyzeResponse>> {
+  async analyzeKeyframe(image: Blob, mode: 'food' | 'pose' | 'machine', context?: string): Promise<Result<AnalyzeResponse>> {
     try {
       const imageDataUrl = await blobToDataUrl(image);
       const res = await fetchWithTimeout(

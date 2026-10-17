@@ -39,7 +39,7 @@ export default function DashboardPage() {
             {log.slice(0, 30).map((e) => (
               <li key={e.id} className="flex items-center justify-between gap-2 py-2">
                 <span>
-                  {e.kind === 'workout' ? `🏋️ ${e.reps} × ${e.exercise}` : `🥗 ${e.macros.items.map((i) => i.name).join(', ') || 'Meal'}`}
+                  {e.kind === 'workout' ? `🏋️ ${e.reps} × ${e.exercise.replace(/_/g, ' ')}${e.load ? ` @ ${e.load.value} ${e.load.unit}` : ''}` : `🥗 ${e.macros.items.map((i) => i.name).join(', ') || 'Meal'}`}
                   {e.kind === 'workout' && e.alerts.length > 0 && <span className="ml-2 text-xs text-amber-300">{e.alerts.length} form cue(s)</span>}
                 </span>
                 <span className="shrink-0 text-xs text-neutral-500">

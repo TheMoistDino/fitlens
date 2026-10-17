@@ -4,6 +4,10 @@
  */
 
 export type ExerciseKind = 'squat' | 'curl' | 'pushup';
+/** Gym machines tracked by the fitness engine (src/features/fitness). */
+export type MachineExercise = 'lat_pulldown' | 'chest_press' | 'seated_row' | 'leg_extension';
+export type AnyExercise = ExerciseKind | MachineExercise;
+export type WeightUnit = 'lb' | 'kg';
 export type Severity = 'info' | 'warn' | 'critical';
 
 export interface FormAlert {
@@ -31,7 +35,7 @@ export type DeviceStatus = 'disabled' | 'connecting' | 'connected' | 'disconnect
 
 export interface HudPayload {
   repCount: number;
-  exercise?: ExerciseKind;
+  exercise?: AnyExercise;
   calories?: number;
   formAlert?: FormAlert | null;
   macroSummary?: MacroSummary | null;
@@ -39,26 +43,37 @@ export interface HudPayload {
 
 export interface WorkoutSummary {
   id: string;
-  exercise: ExerciseKind;
+  exercise: AnyExercise;
   reps: number;
   durationMs: number;
   calories: number;
   alerts: FormAlert[];
   endedAt: number;
+  /** Confirmed machine load, when known. */
+  load?: { value: number; unit: WeightUnit };
 }
 
 export type SponsorEventMap = {
   /** Fired on every rep completed (state change, not per-frame). */
-  'rep:completed': { exercise: ExerciseKind; repCount: number; calories: number };
+  'rep:completed': { exercise: AnyExercise; repCount: number; calories: number };
   /** Fired when the form classification changes (null = form OK again). */
   'form:alert': FormAlert | null;
   /** Low-frequency keyframe for cloud multimodal analysis. */
-  'keyframe:captured': { image: Blob; mode: 'food' | 'pose'; context?: string };
+  'keyframe:captured': { image: Blob; mode: 'food' | 'pose' | 'machine'; context?: string; requestId?: number };
   /** Result of a cloud food analysis. */
   'macro:result': MacroSummary;
   /** Free-form coaching text from cloud pose analysis. */
   'coach:feedback': { text: string; source: 'stepfun' | 'fetchai' | 'mock' };
-  'workout:started': { exercise: ExerciseKind };
+  /** Gym machine classification for a `machine` keyframe (echoes its requestId). */
+  'machine:result': {
+    requestId?: number;
+    machine: MachineExercise | 'unknown';
+    confidence: number;
+    /** Normalised [0..1] box around the machine, when the model returned one. */
+    box?: { x: number; y: number; w: number; h: number };
+    source: 'stepfun' | 'mock';
+  };
+  'workout:started': { exercise: AnyExercise };
   'workout:ended': WorkoutSummary;
   /** Rolled-up HUD snapshot (emitted by the glasses plugin after coalescing). */
   'hud:update': HudPayload;

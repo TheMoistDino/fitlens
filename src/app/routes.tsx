@@ -12,6 +12,7 @@ export interface AppRoute {
  */
 export const routes: AppRoute[] = [
   { path: '/scan', label: 'Food Scanner', Component: lazy(() => import('@/features/food-scanner/FoodScannerPage')) },
+  { path: '/gym', label: 'Gym Coach', Component: lazy(() => import('@/features/fitness/FitnessPage')) },
   { path: '/workout', label: 'Workout Tracker', Component: lazy(() => import('@/features/workout/WorkoutPage')) },
   { path: '/dashboard', label: 'Dashboard', Component: lazy(() => import('@/features/dashboard/DashboardPage')) },
 ];

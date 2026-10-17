@@ -1,4 +1,4 @@
-import { PoseLandmarker, type NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { PoseLandmarker, type Landmark, type NormalizedLandmark } from '@mediapipe/tasks-vision';
 import { getVisionFileset, monotonicClock } from '../visionRuntime';
 
 export type Landmarks = NormalizedLandmark[];
@@ -53,6 +53,23 @@ export class PoseLandmarkerService {
     try {
       const result = this.landmarker.detectForVideo(video, this.clock(now));
       return result.landmarks[0] ?? null;
+    } catch (err) {
+      this.lastError = err instanceof Error ? err : new Error(String(err));
+      return null;
+    }
+  }
+
+  /**
+   * Image landmarks (for drawing) plus metric world landmarks (for 3D joint angles), or null.
+   * World landmarks fall back to image landmarks if the model didn't return them.
+   */
+  detectWithWorld(video: HTMLVideoElement, now: number): { image: Landmarks; world: Landmark[] } | null {
+    if (!this.landmarker || this.status !== 'ready') return null;
+    try {
+      const result = this.landmarker.detectForVideo(video, this.clock(now));
+      const image = result.landmarks[0];
+      if (!image) return null;
+      return { image, world: result.worldLandmarks[0] ?? image };
     } catch (err) {
       this.lastError = err instanceof Error ? err : new Error(String(err));
       return null;
