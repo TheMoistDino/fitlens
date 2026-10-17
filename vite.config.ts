@@ -9,6 +9,8 @@ export default defineConfig({
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
   server: {
+    // Allow tunnel hosts (such as Cloudflare Tunnel or ngrok) for mobile testing
+    allowedHosts: true,
     // Required for Sentry JS self-profiling (browserProfilingIntegration).
     headers: { 'Document-Policy': 'js-profiling' },
     // Secrets live in the Hono proxy (server/index.ts); the browser only ever hits /api.

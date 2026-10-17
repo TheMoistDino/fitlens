@@ -93,7 +93,7 @@ export interface MealLoggedPayload {
   weightGrams?: number;
   confidence?: number;
   timestamp: number;
-  source: 'stepfun' | 'mock' | 'manual';
+  source: 'stepfun' | 'mock' | 'manual' | 'upload';
 }
 
 export type FoodScannerStateEvents = {

@@ -159,4 +159,87 @@ describe('WebAR Food Scanner Telemetry & Dual-Dispatch Test Suite', () => {
 
     console.log('✔ All telemetry & dual-dispatch assertions passed successfully!');
   });
+
+  it('should successfully log and dispatch a meal originated from photo upload', async () => {
+    const uploadMeal: MealLoggedPayload = {
+      id: 'upload-meal-' + Date.now(),
+      name: 'Avocado Toast with Poached Egg',
+      calories: 380,
+      macros: {
+        protein: 16,
+        carbs: 28,
+        fat: 22,
+      },
+      weightGrams: 220,
+      confidence: 0.91,
+      timestamp: Date.now(),
+      source: 'upload',
+    };
+
+    let macroReceived: MacroSummary | null = null;
+    let busMealReceived: MealLoggedPayload | null = null;
+
+    sponsorBus.on('macro:result', (data) => {
+      macroReceived = data;
+    }, { mode: 'sync' });
+
+    foodScannerBus.on('MEAL_LOGGED', (data) => {
+      busMealReceived = data;
+    }, { mode: 'sync' });
+
+    // 1. Add to store
+    useFoodLogStore.getState().addMeal({
+      id: uploadMeal.id,
+      name: uploadMeal.name,
+      calories: uploadMeal.calories,
+      protein: uploadMeal.macros.protein,
+      carbs: uploadMeal.macros.carbs,
+      fat: uploadMeal.macros.fat,
+      weightGrams: uploadMeal.weightGrams,
+      confidence: uploadMeal.confidence,
+      source: uploadMeal.source,
+      timestamp: uploadMeal.timestamp,
+    });
+
+    const summary: MacroSummary = {
+      items: [
+        {
+          name: uploadMeal.name,
+          kcal: uploadMeal.calories,
+          protein: uploadMeal.macros.protein,
+          carbs: uploadMeal.macros.carbs,
+          fat: uploadMeal.macros.fat,
+          confidence: uploadMeal.confidence,
+        },
+      ],
+      totalKcal: uploadMeal.calories,
+      source: 'stepfun',
+    };
+
+    sessionLog.add({
+      kind: 'meal',
+      id: uploadMeal.id,
+      endedAt: uploadMeal.timestamp,
+      macros: summary,
+    });
+
+    glassesController.updateHud({ macroSummary: summary });
+    sponsorBus.emit('macro:result', summary);
+    foodScannerBus.emitMealLogged(uploadMeal);
+
+    // Verify persistence in store with 'upload' source
+    const found = useFoodLogStore.getState().dailyLogs.find((m) => m.id === uploadMeal.id);
+    assert.ok(found, 'Uploaded meal must be stored in useFoodLogStore');
+    assert.strictEqual(found.source, 'upload', 'Source must be preserved as upload');
+    assert.strictEqual(found.calories, 380);
+
+    // Verify sessionLog entry
+    const sessionFound = sessionLog.get().find((s) => s.id === uploadMeal.id);
+    assert.ok(sessionFound, 'Uploaded meal must be stored in sessionLog');
+
+    // Verify sponsorBus and foodScannerBus
+    assert.ok(macroReceived, 'sponsorBus received macro:result for upload');
+    assert.ok(busMealReceived, 'foodScannerBus received MEAL_LOGGED for upload');
+    assert.strictEqual(busMealReceived.source, 'upload');
+  });
 });

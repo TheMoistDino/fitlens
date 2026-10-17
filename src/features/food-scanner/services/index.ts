@@ -4,3 +4,4 @@ export * from './FoodDetectionService';
 export * from './FrameSampler';
 export * from './StepFunFoodAdapter';
 export * from './foodStorage';
+export * from './imageProcessor';

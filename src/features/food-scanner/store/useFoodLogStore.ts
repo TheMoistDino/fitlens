@@ -14,7 +14,7 @@ export interface MealLog {
   timestamp: number;
   weightGrams?: number;
   confidence?: number;
-  source?: 'stepfun' | 'mock' | 'manual';
+  source?: 'stepfun' | 'mock' | 'manual' | 'upload';
 }
 
 export interface DailyGoals {

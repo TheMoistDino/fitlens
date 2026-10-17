@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { usePluginHealth, useGlassesState } from '@/app/hooks';
 import { registerGlassesAdapter } from '@/lib/sponsors';
 import { EvenRealitiesAdapter } from '@/lib/sponsors/smart-glasses/EvenRealitiesAdapter';
@@ -162,7 +163,23 @@ export default function DashboardPage() {
         )}
       </Card>
 
-      <Card title="Activity log" action={log.length > 0 && <Button variant="ghost" onClick={handleClearAll}>Clear</Button>}>
+      <Card
+        title="Activity log"
+        action={
+          <div className="flex items-center gap-2">
+            <Link
+              to="/scan?mode=upload"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-neutral-800 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-neutral-700"
+            >
+              <svg className="h-3.5 w-3.5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Upload Meal Photo
+            </Link>
+            {log.length > 0 && <Button variant="ghost" className="text-xs" onClick={handleClearAll}>Clear</Button>}
+          </div>
+        }
+      >
         {log.length === 0 ? (
           <p className="text-sm text-neutral-500">Nothing logged yet. Finish a set or scan a meal.</p>
         ) : (
