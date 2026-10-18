@@ -20,6 +20,8 @@ import type { BoneGroup, BoneStatus, ExerciseProfile, FormCue, FormFlagCode, For
 /** Torso swing limits; front view gets more slack because forward/back motion there is all depth (noisy). */
 export const TORSO_LIMITS = { side: { warn: 15, bad: 25 }, front: { warn: 20, bad: 30 } } as const;
 export const ASYMMETRY_DEG = 12;
+/** Uneven sides must persist this long (~⅓ s) — brief landmark wobble on one side isn't asymmetry. */
+const ASYMMETRY_SUSTAIN_FRAMES = 10;
 /**
  * Push-up plank line. The rest baseline only absorbs *small* offsets (loose clothing shifting the hip
  * landmark), so starting in a sag or a pike can't become the user's "normal".
@@ -72,7 +74,9 @@ export class FormAnalyzer {
   private lean = new Streak();
   private sag = new Streak();
   private pike = new Streak();
-  private asym = new Streak();
+  private asym = new Streak(ASYMMETRY_SUSTAIN_FRAMES);
+  private leftEma = createEma(0.25);
+  private rightEma = createEma(0.25);
   private eventCue: { cue: FormCue; until: number } | null = null;
   private repFlags = new Set<FormFlagCode>();
   private counts: Partial<Record<FormFlagCode, number>> = {};
@@ -148,8 +152,14 @@ export class FormAnalyzer {
 
     // --- bilateral asymmetry: only meaningful when both sides are actually visible (front view),
     // and only while moving (at rest people often hold handles unevenly).
-    const asymmetry = cameraView === 'front' && leftAngle !== null && rightAngle !== null ? Math.abs(leftAngle - rightAngle) : null;
-    const asymActive = this.asym.update(moving && asymmetry !== null && asymmetry > ASYMMETRY_DEG);
+    // Each side is smoothed first so one jittery landmark can't create a fake gap.
+    if (leftAngle === null) this.leftEma.reset();
+    if (rightAngle === null) this.rightEma.reset();
+    const l = leftAngle !== null ? this.leftEma.next(leftAngle) : null;
+    const r = rightAngle !== null ? this.rightEma.next(rightAngle) : null;
+    const asymmetry = cameraView === 'front' && l !== null && r !== null ? Math.abs(l - r) : null;
+    const asymLimit = this.profile.asymmetryDeg ?? ASYMMETRY_DEG;
+    const asymActive = this.asym.update(moving && asymmetry !== null && asymmetry > asymLimit);
     if (asymActive) frameCues.push({ code: 'asymmetry', message: 'Uneven sides — keep both even', severity: 'warn' });
 
     this.trackRisingEdges(new Set(frameCues.map((c) => c.code)));
@@ -180,7 +190,7 @@ export class FormAnalyzer {
           : { code: 'short_rom_start', message: this.profile.shortAtStartCue, severity: 'warn' };
     } else if (e.type === 'rep') {
       // Only flag clearly dropped reps. Even a controlled 1–1.5 s lowering is fine; < ~0.6 s is a drop.
-      const minEccentricMs = Math.max(600, this.profile.tempo.eccentric * 300);
+      const minEccentricMs = this.profile.minEccentricMs ?? 600;
       if (e.rep.eccentricMs < minEccentricMs) cue = { code: 'fast_eccentric', message: 'Control the eccentric — slow it down', severity: 'warn' };
       else if (e.rep.flags.includes('short_rom_start')) cue = { code: 'short_rom_start', message: this.profile.shortAtStartCue, severity: 'info' };
     }

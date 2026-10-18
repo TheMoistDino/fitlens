@@ -16,9 +16,10 @@ import type { ExerciseProfile, RepEngineEvent, RepEngineSnapshot, RepPhase, RepR
  * Robustness against pose-tracking glitches (a wrist that jumps for a frame or two):
  *  - raw angles pass through a 5-frame median before the EMA, so 1–2 frame spikes vanish;
  *  - reaching the far end and completing a rep must hold for CONFIRM_FRAMES consecutive frames;
- *  - phase durations are measured *after* the rep from its recorded trace (time of first arrival at,
- *    and last departure from, the actual turnaround), not from when a threshold was first crossed.
- *    One early threshold crossing can therefore no longer make a slow eccentric look fast.
+ *  - phase durations are measured *after* the rep from its recorded trace, between the actual
+ *    turnarounds (top → bottom → top), not from when a threshold was first crossed. The trace starts
+ *    ~1.5 s before the rep, so the real starting point is included even when reps run back-to-back
+ *    without a pause. One early threshold crossing can no longer make a slow eccentric look fast.
  *
  * A first phase that turns around before INFLECTION is a partial rep (not counted). Tiny wobbles that
  * never get past 2d are ignored entirely, which kills "twitch" false positives.
@@ -32,6 +33,13 @@ const CONFIRM_FRAMES = 3;
 const MEDIAN_WINDOW = 5;
 /** Safety cap on the per-rep trace (≈ 20 s at 30 fps). */
 const MAX_TRACE = 600;
+/** READY frames kept so a rep's trace includes the moment movement really began. */
+const PRE_TRACE = 45;
+/**
+ * A turnaround counts as "reached" within this fraction of the rep's actual range of motion. Relative,
+ * so standing jitter can't anchor the start to an earlier wobble, and ~85% of the motion is timed.
+ */
+const TURN_FRACTION = 0.08;
 
 interface Timing {
   /** Last frame the user was still at the start position — the true start of the movement. */
@@ -50,6 +58,8 @@ export class RepEngine {
   private timing: Timing = this.freshTiming(0);
   /** (t, progress) samples of the rep in progress — used to measure phase durations afterwards. */
   private trace: Array<[number, number]> = [];
+  /** Rolling buffer of recent READY samples (see PRE_TRACE). */
+  private preTrace: Array<[number, number]> = [];
   private lastAngle = NaN;
   private lastProgress = 0;
   /** Last time progress was inside the start band. */
@@ -111,7 +121,12 @@ export class RepEngine {
     const atEnd = this.endStreak >= CONFIRM_FRAMES;
     const atStart = this.startStreak >= CONFIRM_FRAMES;
 
-    if (this.phase !== 'READY' && this.phase !== 'REP_COMPLETED' && this.trace.length < MAX_TRACE) this.trace.push([t, p]);
+    if (this.phase === 'READY' || this.phase === 'REP_COMPLETED') {
+      this.preTrace.push([t, p]);
+      if (this.preTrace.length > PRE_TRACE) this.preTrace.shift();
+    } else if (this.trace.length < MAX_TRACE) {
+      this.trace.push([t, p]);
+    }
 
     // REP_COMPLETED is a one-frame state so the HUD can flash; fall through to READY logic.
     if (this.phase === 'REP_COMPLETED') go('READY');
@@ -121,7 +136,7 @@ export class RepEngine {
         if (p <= d) {
           this.lastAtStart = t;
         } else {
-          this.beginRep(Math.max(this.lastAtStart, t - 1000), t, p);
+          this.beginRep(Math.max(this.lastAtStart, t - 1000), [...this.preTrace, [t, p]]);
           go(this.firstPhase);
         }
         break;
@@ -151,14 +166,18 @@ export class RepEngine {
             go('INFLECTION');
           } else if (p > this.timing.minProgressInSecond + TWITCH_BANDS * d) {
             // Turned around before getting back to the start.
+            // The next rep really began at the turnaround (lowest point of this return), not now.
+            const turnIdx = indexOfMin(this.trace);
+            const carried = this.trace.slice(turnIdx);
+            const turnT = carried[0]?.[0] ?? t;
             if (this.timing.minProgressInSecond <= TWITCH_BANDS * d) {
               // Close enough (within ~20°): count it, but flag the short range at the start.
-              this.completeRep(t, true, events);
+              this.completeRep(turnT, true, events, turnIdx);
             } else {
               this.partials += 1;
               events.push({ type: 'partial', at: 'start', t });
             }
-            this.beginRep(t, t, p);
+            this.beginRep(turnT, carried);
             go(this.firstPhase);
           }
         }
@@ -173,36 +192,45 @@ export class RepEngine {
     return events;
   }
 
-  private beginRep(start: number, t: number, p: number): void {
+  private beginRep(start: number, trace: Array<[number, number]>): void {
     this.timing = this.freshTiming(start);
-    this.timing.maxProgress = p;
-    this.trace = [[t, p]];
+    this.timing.maxProgress = trace.reduce((m, [, p]) => Math.max(m, p), 0);
+    this.trace = trace;
   }
 
   /**
-   * Phase durations from the recorded trace, anchored on the real turnaround:
-   *   first phase  = rep start → first arrival within d of the peak
-   *   pause        = first arrival → last departure from within d of the peak
-   *   second phase = last departure → completion
+   * Phase durations from the recorded trace, between the real turnarounds:
+   *   start  = last moment near the starting extreme before the peak (top of a squat, arm hanging…)
+   *   peak   = first arrival near the far extreme;  leave = last moment there
+   * ("near" = within TURN_FRACTION of the rep's own range)
+   *   first phase = start → peak,  pause = peak → leave,  second phase = leave → completion
+   * `endIdx` limits the trace (used when a rep ends at a turnaround instead of the start band).
    */
-  private completeRep(t: number, shortAtStart: boolean, events: RepEngineEvent[]): void {
+  private completeRep(t: number, shortAtStart: boolean, events: RepEngineEvent[], endIdx?: number): void {
     const tm = this.timing;
-    if (t - tm.repStart < MIN_REP_MS) return; // too fast to be real
-    const trace = this.trace;
+    const trace = endIdx === undefined ? this.trace : this.trace.slice(0, endIdx + 1);
+    if (trace.length === 0) return;
     const peak = trace.reduce((m, [, p]) => Math.max(m, p), -Infinity);
-    const near = peak - this.d;
-    const firstArrival = trace.find(([, p]) => p >= near)?.[0] ?? tm.repStart;
-    let lastDeparture = firstArrival;
-    for (const [ts, p] of trace) if (p >= near) lastDeparture = ts;
+    const low = trace.reduce((m, [, p]) => Math.min(m, p), Infinity);
+    const eps = Math.max(1e-6, (peak - low) * TURN_FRACTION);
+    const peakIdx = trace.findIndex(([, p]) => p >= peak - eps);
+    let leaveIdx = peakIdx;
+    for (let i = peakIdx; i < trace.length; i++) if (trace[i]![1] >= peak - eps) leaveIdx = i;
+    let lowBefore = Infinity;
+    for (let i = 0; i <= peakIdx; i++) lowBefore = Math.min(lowBefore, trace[i]![1]);
+    let startIdx = 0;
+    for (let i = 0; i <= peakIdx; i++) if (trace[i]![1] <= lowBefore + eps) startIdx = i;
 
-    const firstMs = Math.max(0, firstArrival - tm.repStart);
-    const pauseMs = Math.max(0, lastDeparture - firstArrival);
-    const secondMs = Math.max(0, t - lastDeparture);
+    const startT = trace[startIdx]![0];
+    if (t - startT < MIN_REP_MS || t - tm.repStart < MIN_REP_MS) return; // too fast to be real
+    const firstMs = trace[peakIdx]![0] - startT;
+    const pauseMs = trace[leaveIdx]![0] - trace[peakIdx]![0];
+    const secondMs = Math.max(0, t - trace[leaveIdx]![0]);
     const eccentricFirst = this.firstPhase === 'ECCENTRIC';
     this.reps += 1;
     const rep: RepRecord = {
       index: this.reps,
-      startedAt: tm.repStart,
+      startedAt: startT,
       endedAt: t,
       eccentricMs: eccentricFirst ? firstMs : secondMs,
       concentricMs: eccentricFirst ? secondMs : firstMs,
@@ -217,6 +245,12 @@ export class RepEngine {
   private freshTiming(t: number): Timing {
     return { repStart: t, maxProgress: 0, minProgressInSecond: Infinity };
   }
+}
+
+function indexOfMin(trace: Array<[number, number]>): number {
+  let idx = 0;
+  for (let i = 1; i < trace.length; i++) if (trace[i]![1] < trace[idx]![1]) idx = i;
+  return idx;
 }
 
 function median(values: number[]): number {
